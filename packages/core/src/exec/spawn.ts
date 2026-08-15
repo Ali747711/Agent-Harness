@@ -19,8 +19,6 @@ const KILL_GRACE_MS = 2_000;
 export interface SpawnRequest {
   argv: readonly string[];
   env: NodeJS.ProcessEnv;
-  /** Applied to stderr before it is returned; used for sandbox annotation. */
-  annotateStderr?: (stderr: string) => string;
 }
 
 export function runProcess(
@@ -138,7 +136,7 @@ export function runProcess(
         return {
           exitCode: code ?? -1,
           stdout,
-          stderr: request.annotateStderr === undefined ? stderr : request.annotateStderr(stderr),
+          stderr,
           truncated,
           timedOut,
           durationMs: Date.now() - startedAt

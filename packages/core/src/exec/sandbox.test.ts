@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CONFIG_DEFAULTS } from '../config/schema.ts';
 import { isHarnessError } from '../errors/index.ts';
@@ -11,12 +11,16 @@ import { createCommandRunner, credentialDenyPaths, sandboxPolicyFor } from './po
 import type { CommandRunOptions } from './runner.ts';
 import {
   assertRuntimeConfig,
+  disposeSandbox,
   mergeSandboxEnv,
   probeSandbox,
   SandboxedCommandRunner,
   type SandboxManagerLike,
   toRuntimeConfig
 } from './sandbox.ts';
+
+// The log monitor keeps the event loop alive; without this vitest never exits.
+afterAll(disposeSandbox);
 
 let workspace: string;
 let outside: string;
@@ -54,6 +58,7 @@ function stubManager(overrides: Partial<SandboxManagerLike> = {}): SandboxManage
     }),
     annotateStderrWithSandboxFailures: (_id, stderr) => stderr,
     cleanupAfterCommand: () => undefined,
+    reset: async () => undefined,
     ...overrides
   };
 }
@@ -205,14 +210,54 @@ describe('SandboxedCommandRunner fails closed', () => {
     expect(inits).toBe(1);
   });
 
-  it('routes stderr through the runtime annotator', async () => {
+  it('explains a failed command through the runtime annotator', async () => {
     const runner = new SandboxedCommandRunner(policy, { PATH: process.env.PATH ?? '' }, async () =>
       stubManager({
         annotateStderrWithSandboxFailures: (_id, stderr) => `${stderr}<explained>`
       })
     );
-    const result = await runner.run(options({ command: 'echo boom >&2' }));
+    const result = await runner.run(options({ command: 'echo boom >&2; exit 1' }));
     expect(result.stderr).toBe('boom\n<explained>');
+  });
+
+  it('does not pay the violation settle on a command that simply exited 0', async () => {
+    // Annotation is a failure path; a successful command must be untouched.
+    const runner = new SandboxedCommandRunner(policy, { PATH: process.env.PATH ?? '' }, async () =>
+      stubManager({
+        annotateStderrWithSandboxFailures: (_id, stderr) => `${stderr}<explained>`
+      })
+    );
+    const result = await runner.run(options({ command: 'echo warn >&2' }));
+    expect(result.stderr).toBe('warn\n');
+  });
+
+  it('waits for the async log monitor only when the failure looks like a denial', async () => {
+    // A failing test suite is the common non-zero exit and must not be slowed
+    // down; a denial must, because the monitor attributes it ~250ms later.
+    let calls = 0;
+    const make = (stderr: string) =>
+      new SandboxedCommandRunner(policy, { PATH: process.env.PATH ?? '' }, async () =>
+        stubManager({
+          annotateStderrWithSandboxFailures: (_id, text) => {
+            calls += 1;
+            return calls > 1 ? `${text}<late>` : text;
+          },
+          wrapWithSandboxArgv: async () => ({
+            argv: ['bash', '-c', `printf '%s' ${JSON.stringify(stderr)} >&2; exit 1`],
+            env: { PATH: process.env.PATH ?? '' }
+          })
+        })
+      );
+
+    calls = 0;
+    const ordinary = await make('3 tests failed').run(options());
+    expect(calls).toBe(1); // no retry
+    expect(ordinary.stderr).toBe('3 tests failed');
+
+    calls = 0;
+    const denied = await make('bash: /x: Operation not permitted').run(options());
+    expect(calls).toBe(2); // retried after the settle
+    expect(denied.stderr).toContain('<late>');
   });
 });
 

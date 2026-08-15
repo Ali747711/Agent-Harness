@@ -2,10 +2,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CONFIG_DEFAULTS } from '../config/schema.ts';
-import { probeSandbox } from '../exec/sandbox.ts';
+import { disposeSandbox, probeSandbox } from '../exec/sandbox.ts';
 import { MockModelClient } from '../model/mock/client.ts';
 import { builtinToolRegistry } from '../tools/index.ts';
 import { AgentSession } from './session.ts';
@@ -19,6 +19,9 @@ import { AgentSession } from './session.ts';
  * passing vacuously.
  */
 const status = await probeSandbox();
+
+// The log monitor keeps the event loop alive; without this vitest never exits.
+afterAll(disposeSandbox);
 
 let workspace: string;
 

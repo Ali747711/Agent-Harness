@@ -2,6 +2,8 @@ export { DirectCommandRunner, scrubEnv } from './direct.ts';
 export { createCommandRunner, credentialDenyPaths, sandboxPolicyFor } from './policy.ts';
 export type { CommandRunner, CommandRunOptions, CommandRunResult } from './runner.ts';
 export {
+  assertRuntimeConfig,
+  disposeSandbox,
   mergeSandboxEnv,
   probeSandbox,
   SandboxedCommandRunner,

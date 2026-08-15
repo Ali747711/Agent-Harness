@@ -4,6 +4,7 @@
  */
 import {
   type Config,
+  disposeSandbox,
   indexDbPath,
   isHarnessError,
   loadConfig,
@@ -197,4 +198,7 @@ main()
   .catch((error: unknown) => {
     process.stderr.write(`fatal: ${redactSecrets(String(error))}\n`);
     process.exitCode = 1;
-  });
+  })
+  // The sandbox log monitor holds the event loop open; without this the
+  // process would never exit once sandbox.enabled is true.
+  .finally(() => disposeSandbox());

@@ -30,6 +30,10 @@ export interface SandboxPolicy {
   allowedDomains: readonly string[];
 }
 
+/** Measured: the macOS log monitor needs ~250ms to attribute a violation. */
+const VIOLATION_SETTLE_MS = 300;
+const LOOKS_DENIED = /operation not permitted|permission denied/i;
+
 export interface SandboxStatus {
   platform: string;
   supported: boolean;
@@ -39,7 +43,7 @@ export interface SandboxStatus {
 
 /** Minimal structural view of the bits of SandboxManager we depend on. */
 export interface SandboxManagerLike {
-  initialize(config: unknown): Promise<void>;
+  initialize(config: unknown, askCallback?: undefined, enableLogMonitor?: boolean): Promise<void>;
   isSupportedPlatform(): boolean;
   checkDependenciesAsync(): Promise<{ errors: string[]; warnings: string[] }>;
   wrapWithSandboxArgv(
@@ -52,6 +56,28 @@ export interface SandboxManagerLike {
   ): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }>;
   annotateStderrWithSandboxFailures(commandId: string, stderr: string): string;
   cleanupAfterCommand(): void;
+  reset(): Promise<void>;
+}
+
+/**
+ * The runtime's SandboxManager is a process-global singleton, so teardown is
+ * global too rather than per-runner.
+ *
+ * This is not optional bookkeeping: `enableLogMonitor` holds an open handle
+ * that keeps the event loop alive, so a process that initialized the sandbox
+ * and does not reset it NEVER EXITS. Verified — without this the CLI hangs on
+ * quit whenever sandbox.enabled is true.
+ */
+let activeManager: SandboxManagerLike | null = null;
+
+export async function disposeSandbox(): Promise<void> {
+  const manager = activeManager;
+  activeManager = null;
+  if (manager === null) {
+    return;
+  }
+  manager.cleanupAfterCommand();
+  await manager.reset();
 }
 
 /** Structural view of the runtime's own zod schema (it bundles zod 3). */
@@ -210,8 +236,14 @@ export class SandboxedCommandRunner implements CommandRunner {
       }
       const runtimeConfig = toRuntimeConfig(this.policy);
       assertRuntimeConfig(configSchema, runtimeConfig);
-      await manager.initialize(runtimeConfig);
+      // enableLogMonitor: without it a denied WRITE surfaces only as a bare
+      // "Operation not permitted", which tells the model nothing it can act
+      // on. With it, the same failure carries `deny(1) file-write-create
+      // <path>` — the difference between the agent retrying blindly and it
+      // reporting which path the policy refused (R10, legible failure).
+      await manager.initialize(runtimeConfig, undefined, true);
       this.manager = manager;
+      activeManager = manager; // so disposeSandbox() can release the monitor
       return manager;
     })();
     return this.starting;
@@ -236,18 +268,38 @@ export class SandboxedCommandRunner implements CommandRunner {
     );
 
     try {
-      return await runProcess(
-        {
-          argv: wrapped.argv,
-          env: mergeSandboxEnv(this.baseEnv, wrapped.env),
-          // Seatbelt/seccomp denials surface as bare "Operation not permitted";
-          // the runtime turns them back into which rule blocked what.
-          annotateStderr: (stderr) => manager.annotateStderrWithSandboxFailures(commandId, stderr)
-        },
+      const result = await runProcess(
+        { argv: wrapped.argv, env: mergeSandboxEnv(this.baseEnv, wrapped.env) },
         options
       );
+      return { ...result, stderr: await this.explain(manager, commandId, result) };
     } finally {
       manager.cleanupAfterCommand();
     }
+  }
+
+  /**
+   * Turn a bare denial into one that names the rule that caused it.
+   *
+   * Network denials come back in-band (the proxy answers 403) and annotate
+   * immediately. Filesystem denials arrive via an async log monitor that needs
+   * roughly a quarter second, so a short settle is required — but only when
+   * the failure actually looks like a denial. A test suite exiting non-zero is
+   * the common case and must not pay for it.
+   */
+  private async explain(
+    manager: SandboxManagerLike,
+    commandId: string,
+    result: CommandRunResult
+  ): Promise<string> {
+    if (result.exitCode === 0) {
+      return result.stderr;
+    }
+    const annotated = manager.annotateStderrWithSandboxFailures(commandId, result.stderr);
+    if (annotated !== result.stderr || !LOOKS_DENIED.test(result.stderr)) {
+      return annotated;
+    }
+    await new Promise((resolve) => setTimeout(resolve, VIOLATION_SETTLE_MS));
+    return manager.annotateStderrWithSandboxFailures(commandId, result.stderr);
   }
 }
