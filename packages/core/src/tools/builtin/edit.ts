@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { isHarnessError } from '../../errors/index.ts';
 import { defineTool, errorResult, type RegisteredTool, type ToolResult } from '../tool.ts';
+import { diffBadge, renderDiff } from './diff.ts';
 import { atomicWrite, statTracked } from './fsutil.ts';
 
 const EditInputSchema = z.strictObject({
@@ -115,11 +116,13 @@ export const editTool: RegisteredTool = defineTool<EditInput>({
     ctx.files.recordRead(absolute, await statTracked(absolute, updated));
 
     const replaced = input.replace_all === true ? occurrences : 1;
+    const diff = renderDiff(content, updated, input.path);
     return {
       ok: true,
       content: `Edited ${input.path}: replaced ${replaced} occurrence${replaced === 1 ? '' : 's'}`,
-      summary: `edited ${input.path}`,
-      metadata: { replacements: replaced }
+      summary: `${input.path}  ${diffBadge(diff.added, diff.removed)}`,
+      display: diff.text,
+      metadata: { replacements: replaced, added: diff.added, removed: diff.removed }
     };
   }
 });

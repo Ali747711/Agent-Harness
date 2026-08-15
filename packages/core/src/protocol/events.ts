@@ -58,7 +58,9 @@ const ToolCallCompletedSchema = z.strictObject({
   callId: z.string(),
   ok: z.boolean(),
   summary: z.string(),
-  durationMs: z.number().int().nonnegative()
+  durationMs: z.number().int().nonnegative(),
+  /** Optional rich rendering (currently a unified diff) for clients. */
+  display: z.string().optional()
 });
 
 const PermissionRequestedSchema = z.strictObject({

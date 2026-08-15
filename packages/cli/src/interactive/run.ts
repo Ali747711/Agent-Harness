@@ -62,30 +62,60 @@ export async function runInteractive(
     probeEnvironment(options.workspaceRoot)
   ]);
 
+  const sessionOptions = {
+    config: options.config,
+    modelClient,
+    workspaceRoot: options.workspaceRoot,
+    tools: builtinToolRegistry(),
+    memory,
+    environment
+  };
+
+  // /clear starts a genuinely fresh conversation AND a fresh transcript, so
+  // the old one stays intact and resumable.
+  let active = opened;
   const controller = new SessionController({
     session: AgentSession.fromEntries(opened.entries, {
-      config: options.config,
-      modelClient,
-      workspaceRoot: options.workspaceRoot,
-      tools: builtinToolRegistry(),
+      ...sessionOptions,
       sink: opened.sink,
-      memory,
-      environment,
       onPermissionRequest: () => controller.permissionResponder()
     }),
     model: options.config.model,
-    workspaceRoot: options.workspaceRoot
+    workspaceRoot: options.workspaceRoot,
+    newSession: async () => {
+      await active.sink.close().catch(() => undefined);
+      active = await store.create({
+        workspaceRoot: options.workspaceRoot,
+        model: options.config.model
+      });
+      return AgentSession.fromEntries(active.entries, {
+        ...sessionOptions,
+        sink: active.sink,
+        onPermissionRequest: () => controller.permissionResponder()
+      });
+    },
+    listSessions: async () => {
+      const index = await SessionIndex.open(options.indexPath ?? indexDbPath());
+      try {
+        await index.reindex(sessionsDir);
+        return index
+          .list(options.workspaceRoot, 10)
+          .map((session) => `${session.sessionId.slice(0, 8)}  ${session.title}`);
+      } finally {
+        index.close();
+      }
+    }
   });
 
   const instance = render(createElement(App, { controller }));
   try {
     await instance.waitUntilExit();
   } finally {
-    await opened.sink.close().catch(() => undefined);
+    await active.sink.close().catch(() => undefined);
     // Refresh the derived index so --continue finds this session (ADR-0004).
     try {
       const index = await SessionIndex.open(options.indexPath ?? indexDbPath());
-      await index.refresh(opened.filePath);
+      await index.refresh(active.filePath);
       index.close();
     } catch {
       // The index is derived; failing to update it must never fail the session.

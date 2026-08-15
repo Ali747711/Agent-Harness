@@ -14,6 +14,10 @@ export interface ToolLine {
   durationMs: number;
   /** Tail of streamed output, capped so a chatty command cannot grow forever. */
   progress: string;
+  /** Rich rendering from the tool (currently a unified diff). */
+  display?: string;
+  /** Wall-clock start, so a running tool can show live elapsed time. */
+  startedAt: number;
 }
 
 export type TranscriptItem =
@@ -44,6 +48,8 @@ export interface ViewModel {
   liveThinking: string;
   activeTools: ToolLine[];
   pendingPermission: PendingPermission | null;
+  /** Wall-clock start of the active turn, for the elapsed timer. */
+  turnStartedAt: number | null;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -70,6 +76,7 @@ export function initialViewModel(model: string, workspaceRoot: string): ViewMode
     liveThinking: '',
     activeTools: [],
     pendingPermission: null,
+    turnStartedAt: null,
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -137,7 +144,14 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
       };
 
     case 'turn_started':
-      return { ...vm, turn: event.turn, status: 'working', liveText: '', liveThinking: '' };
+      return {
+        ...vm,
+        turn: event.turn,
+        status: 'working',
+        liveText: '',
+        liveThinking: '',
+        turnStartedAt: Date.now()
+      };
 
     case 'assistant_text_delta':
       return { ...vm, status: 'working', liveText: vm.liveText + event.text };
@@ -160,7 +174,8 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
             status: 'running',
             summary: '',
             durationMs: 0,
-            progress: ''
+            progress: '',
+            startedAt: Date.now()
           }
         ]
       };
@@ -185,7 +200,9 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
         status: event.ok ? 'ok' : 'error',
         summary: event.summary,
         durationMs: event.durationMs,
-        progress: finished?.progress ?? ''
+        progress: finished?.progress ?? '',
+        startedAt: finished?.startedAt ?? Date.now(),
+        ...(event.display !== undefined && { display: event.display })
       };
       return {
         ...vm,
@@ -267,7 +284,8 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
         ...flushLive(vm),
         status: 'idle',
         activeTools: [],
-        pendingPermission: null
+        pendingPermission: null,
+        turnStartedAt: null
       };
 
     default: {

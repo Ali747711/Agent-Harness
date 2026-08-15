@@ -546,7 +546,8 @@ export class AgentSession {
         callId: call.id,
         ok: result.ok,
         summary: result.ok ? result.summary : result.error.message.slice(0, 200),
-        durationMs: Date.now() - startedAt
+        durationMs: Date.now() - startedAt,
+        ...(result.ok && result.display !== undefined && { display: result.display })
       };
     }
 
@@ -719,7 +720,7 @@ export class AgentSession {
   private async *streamOnce(
     signal: AbortSignal
   ): AsyncGenerator<AgentEvent, TurnOutcome, undefined> {
-    const { config, modelClient, retry } = this.options;
+    const { modelClient, retry } = this.options;
     const maxAttempts = (retry?.attempts ?? 3) + 1;
     const baseDelayMs = retry?.baseDelayMs ?? 500;
 

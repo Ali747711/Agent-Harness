@@ -7,9 +7,9 @@
     "tool_call_started edit",
     "permission_requested edit",
     "permission_resolved allow_session by user",
-    "tool_call_completed ok edited notes.md",
+    "tool_call_completed ok notes.md  +1 −1",
     "tool_call_started edit",
-    "tool_call_completed ok edited notes.md",
+    "tool_call_completed ok notes.md  +1 −1",
     "assistant_text_delta \"Both edits applied.\"",
     "turn_completed end_turn",
     "session_idle"
@@ -86,8 +86,9 @@
       "type": "tool_call_completed",
       "callId": "c2",
       "ok": true,
-      "summary": "edited notes.md",
-      "durationMs": "<ms>"
+      "summary": "notes.md  +1 −1",
+      "durationMs": "<ms>",
+      "display": "@@ -1,2 +1,2 @@\n # notes\n-alpha\n+beta"
     },
     {
       "type": "tool_call_started",
@@ -104,8 +105,9 @@
       "type": "tool_call_completed",
       "callId": "c3",
       "ok": true,
-      "summary": "edited notes.md",
-      "durationMs": "<ms>"
+      "summary": "notes.md  +1 −1",
+      "durationMs": "<ms>",
+      "display": "@@ -1,2 +1,2 @@\n # notes\n-beta\n+gamma"
     },
     {
       "type": "assistant_text_delta",

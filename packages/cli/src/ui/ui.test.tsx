@@ -12,9 +12,11 @@ import { initialViewModel, type ViewModel } from '../state/view-model.ts';
 import { App } from './app.tsx';
 import {
   compactTokens,
+  Diff,
+  Markdown,
   PermissionDialog,
   StatusBar,
-  ToolStatus,
+  ToolPanel,
   TranscriptLine
 } from './parts.tsx';
 
@@ -60,6 +62,47 @@ describe('compactTokens', () => {
   });
 });
 
+describe('markdown and diff rendering', () => {
+  it('renders code fences, inline code, bold, and bullets', () => {
+    const { lastFrame, unmount } = render(
+      createElement(Markdown, {
+        source: [
+          'Here is **bold** text with `inline code`.',
+          '',
+          '- first point',
+          '- second point',
+          '',
+          '```ts',
+          'const x = 1;',
+          '```'
+        ].join('\n')
+      })
+    );
+    const frame = lastFrame() ?? '';
+    unmount();
+    expect(frame).toContain('bold');
+    expect(frame).toContain('inline code');
+    expect(frame).toContain('• first point');
+    expect(frame).toContain('const x = 1;');
+    // The fence markers themselves must not survive into the output.
+    expect(frame).not.toContain('```');
+    expect(frame).not.toContain('**');
+  });
+
+  it('renders a unified diff with hunk headers and +/- lines', () => {
+    const { lastFrame, unmount } = render(
+      createElement(Diff, {
+        text: ['@@ -1,2 +1,3 @@', ' context', '-old line', '+new line'].join('\n')
+      })
+    );
+    const frame = lastFrame() ?? '';
+    unmount();
+    expect(frame).toContain('@@ -1,2 +1,3 @@');
+    expect(frame).toContain('-old line');
+    expect(frame).toContain('+new line');
+  });
+});
+
 describe('presentational parts', () => {
   it('renders each transcript item kind', () => {
     const cases = [
@@ -85,7 +128,7 @@ describe('presentational parts', () => {
 
   it('shows tool state, summary, and streamed progress', () => {
     const running = render(
-      createElement(ToolStatus, {
+      createElement(ToolPanel, {
         line: {
           callId: 'c1',
           tool: 'bash',
@@ -93,7 +136,8 @@ describe('presentational parts', () => {
           status: 'running',
           summary: '',
           durationMs: 0,
-          progress: 'PASS one\nPASS two\n'
+          progress: 'PASS one\nPASS two\n',
+          startedAt: Date.now()
         }
       })
     );
@@ -102,7 +146,7 @@ describe('presentational parts', () => {
     running.unmount();
 
     const done = render(
-      createElement(ToolStatus, {
+      createElement(ToolPanel, {
         line: {
           callId: 'c1',
           tool: 'read',
@@ -110,7 +154,8 @@ describe('presentational parts', () => {
           status: 'ok',
           summary: 'read 2 of 2 lines',
           durationMs: 4,
-          progress: ''
+          progress: '',
+          startedAt: Date.now()
         }
       })
     );
@@ -132,7 +177,7 @@ describe('presentational parts', () => {
     );
     const frame = lastFrame() ?? '';
     unmount();
-    expect(frame).toContain('Permission required');
+    expect(frame).toContain('permission required');
     expect(frame).toContain('git status');
     expect(frame).toContain('bash(git status:*)');
     expect(frame).toContain('allow once');
@@ -186,13 +231,13 @@ describe('App', () => {
     const { lastFrame, stdin, unmount } = render(createElement(App, { controller }));
     controller.submit('write a file');
     await settle();
-    expect(lastFrame()).toContain('Permission required');
+    expect(lastFrame()).toContain('permission required');
 
     stdin.write('n'); // deny
     await settle();
     const frame = lastFrame() ?? '';
     unmount();
-    expect(frame).not.toContain('Permission required');
+    expect(frame).not.toContain('permission required');
     expect(frame).toContain('permission denied');
   });
 
@@ -207,7 +252,8 @@ describe('App', () => {
     await settle();
     const frame = lastFrame() ?? '';
     unmount();
-    // The prompt moved into the transcript rather than staying in the input.
-    expect(frame).toContain('> hello');
+    // The prompt moved into a 'you' panel rather than staying in the input.
+    expect(frame).toContain('you');
+    expect(frame).toContain('hello');
   });
 });

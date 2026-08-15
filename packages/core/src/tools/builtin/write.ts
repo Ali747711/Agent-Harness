@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { isHarnessError } from '../../errors/index.ts';
 import { defineTool, errorResult, type RegisteredTool, type ToolResult } from '../tool.ts';
+import { diffBadge, renderDiff } from './diff.ts';
 import { atomicWrite, statTracked } from './fsutil.ts';
 
 const WriteInputSchema = z.strictObject({
@@ -82,11 +83,13 @@ export const writeTool: RegisteredTool = defineTool<WriteInput>({
 
     const lines = input.content.length === 0 ? 0 : input.content.split('\n').length;
     const action = existing === null ? 'Created' : 'Overwrote';
+    const diff = renderDiff(existing ?? '', input.content, input.path);
     return {
       ok: true,
       content: `${action} ${input.path} (${lines} lines, ${Buffer.byteLength(input.content, 'utf8')} bytes)`,
-      summary: `${action.toLowerCase()} ${input.path}`,
-      metadata: { created: existing === null, lines }
+      summary: `${input.path}  ${diffBadge(diff.added, diff.removed)}`,
+      display: diff.text,
+      metadata: { created: existing === null, lines, added: diff.added, removed: diff.removed }
     };
   }
 });

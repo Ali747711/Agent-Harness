@@ -1,5 +1,6 @@
 import type { AgentSession, PermissionChoice } from '@harness/core';
 
+import { isKnownCommand, parseSlash, SLASH_COMMANDS } from '../state/slash.ts';
 import {
   initialViewModel,
   reduce,
@@ -23,9 +24,14 @@ export interface ControllerOptions {
   session: AgentSession;
   model: string;
   workspaceRoot: string;
+  /** Used by /clear to start a fresh conversation (and a fresh transcript). */
+  newSession?: () => Promise<AgentSession> | AgentSession;
+  /** Backs /sessions; injected so the controller stays free of storage concerns. */
+  listSessions?: () => Promise<string[]>;
 }
 
 export class SessionController {
+  private session: AgentSession;
   private vm: ViewModel;
   private readonly listeners = new Set<(vm: ViewModel) => void>();
   private readonly queue: string[] = [];
@@ -34,6 +40,7 @@ export class SessionController {
   private resolvePermission: ((choice: PermissionChoice) => void) | null = null;
 
   constructor(private readonly options: ControllerOptions) {
+    this.session = options.session;
     this.vm = initialViewModel(options.model, options.workspaceRoot);
   }
 
@@ -69,9 +76,76 @@ export class SessionController {
     if (trimmed.length === 0) {
       return;
     }
+    // Slash commands are client-side: they never reach the model.
+    const command = parseSlash(trimmed);
+    if (command !== null && isKnownCommand(command.name)) {
+      void this.runCommand(command.name);
+      return;
+    }
+    if (command !== null) {
+      this.update(withNotice(this.vm, `unknown command /${command.name} — try /help`));
+      return;
+    }
     this.queue.push(trimmed);
     this.update(withQueued(this.vm, [...this.queue]));
     void this.drain();
+  }
+
+  private async runCommand(name: string): Promise<void> {
+    switch (name) {
+      case 'help': {
+        const lines = SLASH_COMMANDS.map(
+          (command) => `/${command.name.padEnd(9)} ${command.summary}`
+        ).join('\n');
+        this.update(
+          withNotice(
+            this.vm,
+            `${lines}\n\nenter submit · shift+enter newline · ↑/↓ history · ctrl-w delete word · esc interrupt · ctrl-c quit`
+          )
+        );
+        return;
+      }
+      case 'cost': {
+        const totals = this.session.usage();
+        this.update(
+          withNotice(
+            this.vm,
+            `${totals.requests} request(s) · ${totals.inputTokens} in · ${totals.outputTokens} out · ` +
+              `${totals.cacheReadInputTokens} cache read · ${totals.cacheCreationInputTokens} cache write · ` +
+              `$${totals.costUsd.toFixed(4)} · cache hit ${(totals.cacheHitRatio * 100).toFixed(0)}%`
+          )
+        );
+        return;
+      }
+      case 'model':
+        this.update(withNotice(this.vm, `model: ${this.options.model}`));
+        return;
+      case 'sessions': {
+        const list = (await this.options.listSessions?.()) ?? [];
+        this.update(
+          withNotice(this.vm, list.length === 0 ? 'no other sessions yet' : list.join('\n'))
+        );
+        return;
+      }
+      case 'clear': {
+        if (this.options.newSession === undefined) {
+          this.update(withNotice(this.vm, '/clear is unavailable in this mode'));
+          return;
+        }
+        if (this.draining) {
+          this.update(withNotice(this.vm, 'finish or interrupt the current turn before /clear'));
+          return;
+        }
+        this.session = await this.options.newSession();
+        // A fresh view AND a fresh conversation: the point of /clear is that
+        // the next turn carries no prior context.
+        this.vm = initialViewModel(this.options.model, this.options.workspaceRoot);
+        this.update(withNotice(this.vm, 'cleared — new session started'));
+        return;
+      }
+      default:
+        this.update(withNotice(this.vm, `/${name} is not implemented yet`));
+    }
   }
 
   /** Cancel the running turn; a pending permission ask resolves as deny. */
@@ -102,7 +176,7 @@ export class SessionController {
         const controller = new AbortController();
         this.abort = controller;
         try {
-          for await (const event of this.options.session.run(prompt, controller.signal)) {
+          for await (const event of this.session.run(prompt, controller.signal)) {
             this.update(reduce(this.vm, event));
           }
           if (controller.signal.aborted) {

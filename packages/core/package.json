@@ -9,6 +9,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
     "@vscode/ripgrep": "^1.18.0",
+    "diff": "^9.0.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0"
   }
 }
