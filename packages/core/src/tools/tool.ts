@@ -1,7 +1,9 @@
 import type { z } from 'zod';
 
+import type { CommandRunner } from '../exec/runner.ts';
 import type { ResolvedPath } from '../permissions/guard.ts';
 import type { PermissionRequest } from '../protocol/types.ts';
+import type { FileTracker } from './tracker.ts';
 
 /**
  * Tool contract (PHASE1-PLAN.md §4.2). The critical split: `plan()` is a pure
@@ -22,6 +24,12 @@ export interface ToolContext {
   signal: AbortSignal;
   /** Workspace guard — throws HarnessError('permission_denied') on escape. */
   resolvePath(candidate: string): Promise<ResolvedPath>;
+  /** Session-scoped read-before-write state (step 9 invariant). */
+  files: FileTracker;
+  /** Shell execution seam — the Phase-2 sandbox swaps in here (step 10). */
+  runner: CommandRunner;
+  /** Live output chunks; the loop forwards them as tool_call_progress events. */
+  onProgress?: (chunk: string) => void;
 }
 
 export type ToolResult =

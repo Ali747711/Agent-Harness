@@ -2,6 +2,8 @@ import { sep } from 'node:path';
 
 import type { Config } from '../config/schema.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
+import { DirectCommandRunner } from '../exec/direct.ts';
+import type { CommandRunner } from '../exec/runner.ts';
 import type { ModelClient } from '../model/client.ts';
 import { estimateCostUsd } from '../model/pricing.ts';
 import type {
@@ -32,6 +34,8 @@ import {
 } from '../session/index.ts';
 import type { ToolRegistry } from '../tools/registry.ts';
 import type { ToolResult } from '../tools/tool.ts';
+import { FileTracker } from '../tools/tracker.ts';
+import { makeChannel } from './channel.ts';
 import { sleep } from './sleep.ts';
 
 /**
@@ -57,6 +61,8 @@ export interface AgentSessionOptions {
     request: PermissionRequest,
     suggestions: string[]
   ) => Promise<PermissionChoice>;
+  /** Shell execution seam (step 10); defaults to the unsandboxed runner. */
+  runner?: CommandRunner;
   retry?: {
     /** Max retries per model request after recoverable failures. Default 3. */
     attempts?: number;
@@ -122,8 +128,11 @@ export class AgentSession {
   private lastEntryId: string | null = null;
 
   private readonly permissions: PermissionEngine;
+  private readonly fileTracker = new FileTracker();
+  private readonly runner: CommandRunner;
 
   constructor(options: AgentSessionOptions) {
+    this.runner = options.runner ?? new DirectCommandRunner();
     this.options = options;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
     this.system = buildSystemPromptV0(options.workspaceRoot);
@@ -457,13 +466,27 @@ export class AgentSession {
                 }
               };
             } else {
-              try {
-                result = await registered.execute(parsed.data, {
+              // Stream live output as tool_call_progress while executing.
+              const channel = makeChannel<string>();
+              const execution = registered
+                .execute(parsed.data, {
                   workspaceRoot: this.options.workspaceRoot,
                   signal,
                   resolvePath: (candidate) =>
-                    resolveWorkspacePath(this.options.workspaceRoot, candidate)
-                });
+                    resolveWorkspacePath(this.options.workspaceRoot, candidate),
+                  files: this.fileTracker,
+                  runner: this.runner,
+                  onProgress: (chunk) => channel.push(chunk)
+                })
+                .finally(() => channel.close());
+              // Rejections are re-awaited below; this guard just keeps the gap
+              // between channel close and the await from being "unhandled".
+              execution.catch(() => undefined);
+              for await (const chunk of channel) {
+                yield { type: 'tool_call_progress', callId: call.id, chunk };
+              }
+              try {
+                result = await execution;
               } catch (error) {
                 if (isHarnessError(error) && error.code === 'aborted') {
                   aborted = true;

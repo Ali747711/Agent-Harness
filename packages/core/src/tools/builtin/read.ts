@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 
 import { z } from 'zod';
 
 import { isHarnessError } from '../../errors/index.ts';
 import { defineTool, errorResult, type RegisteredTool, type ToolResult } from '../tool.ts';
+import { sha256Of } from './fsutil.ts';
 
 const DEFAULT_LIMIT = 2000;
 const MAX_LINE_CHARS = 2000;
@@ -82,6 +82,10 @@ export const readTool: RegisteredTool = defineTool<ReadInput>({
 
     const fileInfo = await stat(absolute);
     const text = raw.toString('utf8');
+    // Unlock the read-before-write invariant for this exact content (step 9).
+    const sha256 = sha256Of(text);
+    ctx.files.recordRead(absolute, { mtimeMs: fileInfo.mtimeMs, sha256 });
+
     const allLines = text.split('\n');
     // A trailing newline produces one phantom empty tail line; drop it.
     if (allLines.at(-1) === '') {
@@ -93,7 +97,7 @@ export const readTool: RegisteredTool = defineTool<ReadInput>({
         ok: true,
         content: '<empty file>',
         summary: 'read 0 lines',
-        metadata: { lines: 0, bytes: raw.byteLength }
+        metadata: { lines: 0, bytes: raw.byteLength, sha256 }
       };
     }
 
@@ -137,9 +141,8 @@ export const readTool: RegisteredTool = defineTool<ReadInput>({
         lines: allLines.length,
         shown: shownCount,
         bytes: raw.byteLength,
-        // Step 9's read-before-write invariant consumes these.
         mtimeMs: fileInfo.mtimeMs,
-        sha256: createHash('sha256').update(raw).digest('hex')
+        sha256
       }
     };
   }

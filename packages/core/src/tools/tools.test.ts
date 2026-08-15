@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { DirectCommandRunner } from '../exec/direct.ts';
 import { resolveWorkspacePath } from '../permissions/guard.ts';
 import { globTool } from './builtin/glob.ts';
 import { readTool } from './builtin/read.ts';
 import { ToolRegistry } from './registry.ts';
 import { defineTool, type ToolContext } from './tool.ts';
+import { FileTracker } from './tracker.ts';
 
 let workspace: string;
 
@@ -16,7 +18,9 @@ function ctx(root: string): ToolContext {
   return {
     workspaceRoot: root,
     signal: new AbortController().signal,
-    resolvePath: (candidate) => resolveWorkspacePath(root, candidate)
+    resolvePath: (candidate) => resolveWorkspacePath(root, candidate),
+    files: new FileTracker(),
+    runner: new DirectCommandRunner()
   };
 }
 

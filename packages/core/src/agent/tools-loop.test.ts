@@ -117,7 +117,14 @@ describe('tool execution in the loop (step 7)', () => {
     expect(JSON.stringify(client.requests[0]?.tools)).toBe(
       JSON.stringify(client.requests[1]?.tools)
     );
-    expect(client.requests[0]?.tools.map((tool) => tool.name)).toEqual(['glob', 'read']);
+    expect(client.requests[0]?.tools.map((tool) => tool.name)).toEqual([
+      'bash',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'write'
+    ]);
 
     // Usage summed across both segments of the turn.
     expect(events.find((event) => event.type === 'turn_completed')?.usage.inputTokens).toBe(200);
@@ -219,6 +226,46 @@ describe('tool execution in the loop (step 7)', () => {
     expect(events.filter((event) => event.type === 'tool_call_completed' && event.ok)).toHaveLength(
       2
     );
+  });
+
+  it('end-to-end: the real write tool creates a file under acceptEdits', async () => {
+    const { agent } = session(
+      [
+        {
+          toolCalls: [
+            { name: 'write', input: { path: 'generated/hello.txt', content: 'from the agent\n' } }
+          ]
+        },
+        { text: 'created it' }
+      ],
+      { config: { permissionMode: 'acceptEdits' } }
+    );
+    const events = await collect(agent, 'create the file');
+
+    expect(events.some((event) => event.type === 'permission_requested')).toBe(false);
+    expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
+      ok: true
+    });
+    const { readFile } = await import('node:fs/promises');
+    expect(await readFile(join(workspace, 'generated/hello.txt'), 'utf8')).toBe('from the agent\n');
+  });
+
+  it('bash runs under an allow rule with live progress events (steps 10-11)', async () => {
+    const { agent } = session(
+      [
+        { toolCalls: [{ name: 'bash', input: { command: 'echo streamed-live-output' } }] },
+        { text: 'ran it' }
+      ],
+      { config: { permissions: { allow: ['bash(echo:*)'], deny: [] } } }
+    );
+    const events = await collect(agent, 'run echo');
+
+    expect(events.some((event) => event.type === 'permission_requested')).toBe(false);
+    const progress = events.filter((event) => event.type === 'tool_call_progress');
+    expect(progress.map((event) => event.chunk).join('')).toContain('streamed-live-output');
+    expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
+      ok: true
+    });
   });
 
   it('acceptEdits mode allows write effects without asking', async () => {
