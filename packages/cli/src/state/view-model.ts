@@ -48,6 +48,8 @@ export interface ViewModel {
     inputTokens: number;
     outputTokens: number;
     cacheReadInputTokens: number;
+    /** Billed at 1.25x input — invisible here, the cost looks inexplicable. */
+    cacheCreationInputTokens: number;
     costUsd: number;
   };
   queued: string[];
@@ -68,7 +70,13 @@ export function initialViewModel(model: string, workspaceRoot: string): ViewMode
     liveThinking: '',
     activeTools: [],
     pendingPermission: null,
-    usage: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, costUsd: 0 },
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUsd: 0
+    },
     queued: []
   };
 }
@@ -227,6 +235,8 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
           outputTokens: flushed.usage.outputTokens + event.usage.outputTokens,
           cacheReadInputTokens:
             flushed.usage.cacheReadInputTokens + event.usage.cacheReadInputTokens,
+          cacheCreationInputTokens:
+            flushed.usage.cacheCreationInputTokens + event.usage.cacheCreationInputTokens,
           costUsd: flushed.usage.costUsd + event.costUsd
         }
       };

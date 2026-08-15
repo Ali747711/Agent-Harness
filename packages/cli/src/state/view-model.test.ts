@@ -231,9 +231,17 @@ describe('view-model reducer', () => {
     expect(vm.status).toBe('idle');
   });
 
-  it('accumulates usage across turns', () => {
-    const vm = apply(fresh(), [started, completed, completed]);
+  it('accumulates usage across turns, including cache writes (R9)', () => {
+    const withCacheWrite: AgentEvent = {
+      ...completed,
+      usage: { ...completed.usage, cacheCreationInputTokens: 2500 }
+    };
+    const vm = apply(fresh(), [started, withCacheWrite, completed]);
     expect(vm.usage.inputTokens).toBe(200);
+    expect(vm.usage.cacheReadInputTokens).toBe(160);
+    // Cache writes are billed at 1.25x input — tracking them is what makes the
+    // displayed cost explicable next to a small token count.
+    expect(vm.usage.cacheCreationInputTokens).toBe(2500);
     expect(vm.usage.costUsd).toBeCloseTo(0.002, 10);
   });
 

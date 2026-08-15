@@ -108,14 +108,28 @@ export function PermissionDialog({ pending }: { pending: PendingPermission }): R
   );
 }
 
+/** 17927 → "17.9k" so the status bar stays one line. */
+export function compactTokens(count: number): string {
+  if (count < 1000) {
+    return String(count);
+  }
+  return `${(count / 1000).toFixed(1)}k`;
+}
+
 export function StatusBar({ vm }: { vm: ViewModel }): React.ReactElement {
-  const tokens = vm.usage.inputTokens + vm.usage.outputTokens;
-  const cached = vm.usage.cacheReadInputTokens;
+  const { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens } = vm.usage;
+  const tokens = inputTokens + outputTokens;
+  // Cache writes are billed at 1.25x input, so omitting them makes the cost
+  // look impossible next to a small token count.
   return (
     <Box>
       <Text dimColor>
-        {vm.model} · turn {vm.turn} · {tokens} tok
-        {cached > 0 ? ` (${cached} cached)` : ''} · ${vm.usage.costUsd.toFixed(4)}
+        {vm.model} · turn {vm.turn} · {compactTokens(tokens)} tok
+        {cacheReadInputTokens > 0 ? ` · ${compactTokens(cacheReadInputTokens)} cached` : ''}
+        {cacheCreationInputTokens > 0
+          ? ` · ${compactTokens(cacheCreationInputTokens)} written`
+          : ''}{' '}
+        · ${vm.usage.costUsd.toFixed(4)}
         {vm.queued.length > 0 ? ` · ${vm.queued.length} queued` : ''}
         {vm.status === 'working' ? ' · working…' : ''}
       </Text>

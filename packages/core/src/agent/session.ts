@@ -177,7 +177,12 @@ export class AgentSession {
     });
     const path = resolvePath(entries);
     session.history = toModelMessages(path);
-    session.turn = path.filter((entry) => entry.type === 'user').length;
+    // Only real prompts count as turns. Tool results are persisted as
+    // user-role entries too, so counting every user entry inflates the number
+    // by one per tool batch (observed as "turn 7" after two prompts).
+    session.turn = path.filter(
+      (entry) => entry.type === 'user' && entry.data.content.some((block) => block.type === 'text')
+    ).length;
     session.lastEntryId = path.at(-1)?.id ?? null;
     return session;
   }

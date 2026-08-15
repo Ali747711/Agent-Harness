@@ -245,6 +245,72 @@ describe('AgentSession persistence integration', () => {
     ]);
   });
 
+  it('counts only real prompts as turns, not persisted tool results', async () => {
+    // Observed live as "turn 7" after two prompts: every tool batch persists a
+    // user-role entry holding tool_results, which must not count as a turn.
+    const created = await store.create({ workspaceRoot: '/w', model: 'claude-opus-5' });
+    let parentId = created.entries[0]?.id ?? null;
+    const append = async (entry: SessionEntry): Promise<void> => {
+      await created.sink.append(entry);
+      parentId = entry.id;
+    };
+
+    await append(
+      makeEntry(
+        { parentId },
+        { type: 'user', data: { content: [{ type: 'text', text: 'do it' }] } }
+      )
+    );
+    await append(
+      makeEntry(
+        { parentId },
+        {
+          type: 'assistant',
+          data: {
+            content: [{ type: 'tool_use', id: 't1', name: 'read', input: { path: 'a' } }],
+            stopReason: 'tool_use',
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0
+            }
+          }
+        }
+      )
+    );
+    // The tool-result turn: user role, but not a prompt.
+    await append(
+      makeEntry(
+        { parentId },
+        {
+          type: 'user',
+          data: { content: [{ type: 'tool_result', toolUseId: 't1', content: 'file body' }] }
+        }
+      )
+    );
+    await created.sink.close();
+
+    const opened = await store.open(created.sessionId);
+    const resumed = AgentSession.fromEntries(opened.entries, {
+      config: { ...CONFIG_DEFAULTS },
+      modelClient: new MockModelClient([{ text: 'second answer' }]),
+      workspaceRoot: '/w',
+      sink: opened.sink
+    });
+    const events = [];
+    for await (const event of resumed.run('second prompt', new AbortController().signal)) {
+      events.push(event);
+    }
+    await opened.sink.close();
+
+    // One prior prompt + this one = turn 2 (not 3).
+    expect(events.find((event) => event.type === 'turn_started')).toEqual({
+      type: 'turn_started',
+      turn: 2
+    });
+  });
+
   it('surfaces sink failures as fatal, legible errors', async () => {
     const session = new AgentSession({
       config: { ...CONFIG_DEFAULTS },
