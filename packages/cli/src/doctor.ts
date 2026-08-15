@@ -18,6 +18,13 @@ interface Probe {
 
 const PROBE_TIMEOUT_MS = 12_000;
 
+/** Allowlist entries may carry an `:port` suffix; curl wants the bare host. */
+export function stripPort(pattern: string): string {
+  // IPv6 literals are bracketed, so a colon inside brackets is not a port.
+  const match = /^(\[[^\]]+\]|[^:]+)(?::\d+)?$/.exec(pattern);
+  return match?.[1] ?? pattern;
+}
+
 async function runProbes(workspaceRoot: string, config: Config): Promise<Probe[]> {
   // Probe with the sandbox forced ON regardless of config: the question is
   // whether enabling it would work, not whether it is currently enabled.
@@ -71,17 +78,34 @@ async function runProbes(workspaceRoot: string, config: Config): Promise<Probe[]
     });
 
     // Egress is the knob most likely to bite: the runtime has no "allow all",
-    // so enabling the sandbox with an empty allowlist denies all network.
+    // so an empty allowlist denies everything. Which direction is worth
+    // probing depends on the policy — with domains configured, the open
+    // question is whether the allowlist actually LETS TRAFFIC THROUGH, not
+    // whether deny works.
+    const target = policy.allowedDomains[0];
+    const host = target === undefined ? 'example.com' : stripPort(target).replace(/^\*\./, '');
     const net = await run(
-      `curl -s -m 6 -o /dev/null -w '%{http_code}' https://example.com || echo blocked`
+      `curl -s -m 6 -o /dev/null -w '%{http_code}' https://${host} || echo blocked`
     );
     const reachable = net.stdout.includes('200');
-    probes.push({
-      name: 'network egress (allowlist is empty)',
-      expectation: 'blocked',
-      passed: !reachable,
-      detail: reachable ? 'REACHABLE — egress is not being restricted' : 'blocked'
-    });
+    probes.push(
+      target === undefined
+        ? {
+            name: 'egress with an empty allowlist',
+            expectation: 'blocked',
+            passed: !reachable,
+            detail: reachable ? 'REACHABLE — egress is not being restricted' : 'blocked'
+          }
+        : {
+            name: `egress to allowlisted ${host}`,
+            expectation: 'reachable',
+            passed: reachable,
+            detail: reachable
+              ? 'reachable (allowlist works on this machine)'
+              : 'NOT REACHABLE — the allowlist proxy is not passing traffic here; ' +
+                'commands needing the network will hang until they time out'
+          }
+    );
   } finally {
     // Defensive: these exist only if confinement FAILED.
     await rm(marker, { force: true });
@@ -133,10 +157,16 @@ export async function runDoctor(workspaceRoot: string, config: Config): Promise<
     );
   }
 
+  if (failures > 0) {
+    out(`\n${failures} probe(s) failed — do not rely on the sandbox on this machine.`);
+    return 1;
+  }
   out(
-    failures === 0
-      ? '\nConfinement verified. Set sandbox.enabled=true to use it — note that egress\nis denied unless you list domains in sandbox.allowedDomains.'
-      : `\n${failures} probe(s) failed — do not rely on the sandbox on this machine.`
+    policy.allowedDomains.length === 0
+      ? '\nConfinement verified. Set sandbox.enabled=true to use it — but note that egress\n' +
+          'is denied entirely until you list domains in sandbox.allowedDomains. Add one and\n' +
+          're-run doctor to check that allowlisted traffic actually gets through.'
+      : '\nConfinement verified, and the allowlist passes traffic. Safe to set\nsandbox.enabled=true.'
   );
-  return failures === 0 ? 0 : 1;
+  return 0;
 }
