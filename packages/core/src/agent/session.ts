@@ -8,6 +8,7 @@ import { buildSystemPrompt, type EnvironmentSnapshot } from '../context/system-p
 import { HarnessError, isHarnessError } from '../errors/index.ts';
 import { DirectCommandRunner } from '../exec/direct.ts';
 import type { CommandRunner } from '../exec/runner.ts';
+import { redactSecrets } from '../logging/redact.ts';
 import type { ModelClient } from '../model/client.ts';
 import { estimateCostUsd } from '../model/pricing.ts';
 import type {
@@ -260,7 +261,7 @@ export class AgentSession {
           type: 'error',
           severity: 'fatal',
           code: classified.code,
-          message: classified.message,
+          message: redactSecrets(classified.message),
           recoverable: classified.recoverable
         };
         break;
@@ -697,7 +698,7 @@ export class AgentSession {
       type: 'error',
       severity: 'fatal',
       code: error.code,
-      message: error.message,
+      message: redactSecrets(error.message),
       recoverable: error.recoverable
     };
   }

@@ -17,7 +17,7 @@ jobs:
       - run: bun run lint
       - run: bun run check:boundaries
       - run: bun run typecheck
-      - run: bun run test
+      - run: bun run test:coverage
 
   # Portability canary (ADR-0002): the codebase must keep typechecking with
   # tsc executed under Node — catches accidental Bun-only type coupling
@@ -35,3 +35,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: node node_modules/typescript/bin/tsc --noEmit -p packages/core
       - run: node node_modules/typescript/bin/tsc --noEmit -p packages/cli
+
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build:binary
+      # The compiled binary must start on a machine with no repo and no
+      # node_modules — the ripgrep/devtools resolution bugs only show up here.
+      - run: ./dist/harness --version
+      - run: ./dist/harness sessions list

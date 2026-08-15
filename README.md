@@ -22,7 +22,7 @@ It deliberately does **not** wrap the Claude Agent SDK — owning the loop is th
 | **M1** — headless one-shot answer | `harness -p "…" --output-format jsonl` streams a real answer as protocol events | ✅ 2026-08-15 |
 | **M2** — tool loop under permissions | Agent greps/reads/edits/runs tests in a real repo; writes gated by the permission engine | 🔨 in progress (steps 5 ✅, 6–11) |
 | **M3** — interactive TUI + resume | Ink TUI, project memory, `--continue` with a prompt-cache hit on turn 2 | 🔨 code complete (steps 12–14), pending live verification |
-| **M4** — shippable v0.1 | Single binary, golden-transcript suite, hardened errors | planned (steps 15–17) |
+| **M4** — shippable v0.1 | Single binary, golden-transcript suite, hardened errors | 🔨 code complete (steps 15–17) |
 
 Full plan: [docs/PHASE1-PLAN.md](docs/PHASE1-PLAN.md) · strategy: [docs/PLAN.md](docs/PLAN.md) · research: [docs/RESEARCH.md](docs/RESEARCH.md) · decisions: [docs/adr/](docs/adr/)
 
@@ -103,11 +103,23 @@ Three boundary rules, enforced in CI: `core` never imports UI; `Bun.*` APIs only
 ## Development
 
 ```bash
-bun run check        # typecheck + lint + boundaries + tests (the pre-commit gate)
-bun run test         # vitest (offline — mock model client + cassette replay)
-bun run test:live    # live API smoke tests (needs ANTHROPIC_API_KEY; costs money)
-bun run format       # biome, write mode
+bun run check          # typecheck + lint + boundaries + tests w/ coverage gate
+bun run test           # vitest (offline — mock model client + cassette replay)
+bun run test:coverage  # same, with the coverage thresholds enforced
+bun run test:live      # live API smoke tests (needs ANTHROPIC_API_KEY; costs money)
+bun run build:binary   # single executable → dist/harness
+bun run format         # biome, write mode
 ```
+
+Testing approach: no test outside the Anthropic adapter touches the network. The loop runs against a scripted `MockModelClient` (with fault injection for every stop reason, mid-stream failures, and aborts); the adapter's SSE parser replays recorded cassettes through the production path; and a **golden-transcript suite** in [fixtures/golden/](fixtures/golden/) pins 13 end-to-end scenarios at the protocol level, so anything a client displays has to come through there first. Coverage is gated at 80% overall and 85% on `permissions/`, `tools/`, `agent/`, and `session/`.
+
+### Building a binary
+
+```bash
+bun run build:binary && ./dist/harness --version
+```
+
+The compiled binary needs **ripgrep on `PATH`** (`brew install ripgrep` / `apt install ripgrep`): the vendored copy cannot be embedded in a single-file executable, so search falls back to the system `rg` and says so clearly if it is missing.
 
 Testing approach: no test outside the Anthropic adapter touches the network. The loop is tested against a scripted `MockModelClient` (including fault injection for every stop reason, mid-stream failures, and aborts); the adapter's SSE parser is tested by replaying recorded cassettes through the exact production path. See [PHASE1-PLAN §6](docs/PHASE1-PLAN.md).
 

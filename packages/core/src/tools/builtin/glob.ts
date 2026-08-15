@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { isHarnessError } from '../../errors/index.ts';
 import { runProcess } from '../../runtime/proc.ts';
 import { defineTool, errorResult, type RegisteredTool, type ToolResult } from '../tool.ts';
-import { rgBinary } from './rg.ts';
+import { RIPGREP_MISSING_HINT, rgBinary } from './rg.ts';
 
 const DEFAULT_LIMIT = 200;
 const SCAN_CAP = 5000;
@@ -59,10 +59,19 @@ export const globTool: RegisteredTool = defineTool<GlobInput>({
     }
 
     // Argv only — the pattern is never interpolated into a shell string.
-    const result = await runProcess(
-      [rgBinary(), '--files', '--sort-files', '--glob', input.pattern],
-      { cwd: searchDir, signal: ctx.signal, timeoutMs: 30_000 }
-    );
+    let result: Awaited<ReturnType<typeof runProcess>>;
+    try {
+      result = await runProcess([rgBinary(), '--files', '--sort-files', '--glob', input.pattern], {
+        cwd: searchDir,
+        signal: ctx.signal,
+        timeoutMs: 30_000
+      });
+    } catch (error) {
+      if (isHarnessError(error) && error.code === 'aborted') {
+        throw error;
+      }
+      return errorResult(`could not run ripgrep: ${String(error)}`, RIPGREP_MISSING_HINT);
+    }
 
     // rg exits 1 for "no matches" — an answer, not a failure.
     if (result.exitCode !== 0 && result.exitCode !== 1) {

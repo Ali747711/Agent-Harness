@@ -13,3 +13,10 @@ coverage/
 
 # spike artifacts are throwaway (plan step 1)
 spike/
+
+# build + coverage artifacts
+dist/
+coverage/
+
+# bun build scratch files (land in the repo root)
+*.bun-build

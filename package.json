@@ -16,13 +16,16 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "check:boundaries": "bash scripts/check-boundaries.sh",
-    "check": "bun run typecheck && bun run lint && bun run check:boundaries && bun run test",
-    "test:live": "vitest run --config vitest.live.config.ts"
+    "check": "bun run typecheck && bun run lint && bun run check:boundaries && bun run test:coverage",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "test:coverage": "vitest run --coverage",
+    "build:binary": "bun build --compile --minify packages/cli/src/main.ts --outfile dist/harness"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
     "@types/bun": "^1.3.14",
     "@types/node": "^26.2.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

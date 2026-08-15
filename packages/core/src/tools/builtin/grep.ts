@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { isHarnessError } from '../../errors/index.ts';
 import { runProcess } from '../../runtime/proc.ts';
 import { defineTool, errorResult, type RegisteredTool, type ToolResult } from '../tool.ts';
-import { rgBinary } from './rg.ts';
+import { RIPGREP_MISSING_HINT, rgBinary } from './rg.ts';
 
 const DEFAULT_LIMIT = 100;
 
@@ -97,11 +97,19 @@ export const grepTool: RegisteredTool = defineTool<GrepInput>({
     }
     argv.push('--regexp', input.pattern, target);
 
-    const result = await runProcess(argv, {
-      cwd: ctx.workspaceRoot,
-      signal: ctx.signal,
-      timeoutMs: 30_000
-    });
+    let result: Awaited<ReturnType<typeof runProcess>>;
+    try {
+      result = await runProcess(argv, {
+        cwd: ctx.workspaceRoot,
+        signal: ctx.signal,
+        timeoutMs: 30_000
+      });
+    } catch (error) {
+      if (isHarnessError(error) && error.code === 'aborted') {
+        throw error;
+      }
+      return errorResult(`could not run ripgrep: ${String(error)}`, RIPGREP_MISSING_HINT);
+    }
 
     // rg: exit 1 = no matches (an answer); 2 = real error (bad regex etc.).
     if (result.exitCode !== 0 && result.exitCode !== 1) {

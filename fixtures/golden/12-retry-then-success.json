@@ -1,0 +1,49 @@
+{
+  "summary": [
+    "session_started",
+    "turn_started",
+    "error warning model_request_failed",
+    "assistant_text_delta \"Recovered.\"",
+    "turn_completed end_turn",
+    "session_idle"
+  ],
+  "events": [
+    {
+      "type": "session_started",
+      "sessionId": "golden-session",
+      "protocolVersion": 1,
+      "model": "claude-opus-5",
+      "workspaceRoot": "<WS>",
+      "memoryFiles": []
+    },
+    {
+      "type": "turn_started",
+      "turn": 1
+    },
+    {
+      "type": "error",
+      "severity": "warning",
+      "code": "model_request_failed",
+      "message": "api error 529: overloaded — retrying (1/1)",
+      "recoverable": true
+    },
+    {
+      "type": "assistant_text_delta",
+      "text": "Recovered."
+    },
+    {
+      "type": "turn_completed",
+      "stopReason": "end_turn",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 20,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0
+      },
+      "costUsd": 0.001
+    },
+    {
+      "type": "session_idle"
+    }
+  ]
+}

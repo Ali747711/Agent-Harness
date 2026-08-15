@@ -8,6 +8,7 @@ import {
   isHarnessError,
   loadConfig,
   projectSessionsDir,
+  redactSecrets,
   SessionIndex
 } from '@harness/core';
 import { Command } from 'commander';
@@ -134,7 +135,7 @@ async function main(): Promise<number> {
     const message = isHarnessError(error)
       ? `${error.message}\n${JSON.stringify(error.details ?? {}, null, 2)}`
       : String(error);
-    process.stderr.write(`config error: ${message}\n`);
+    process.stderr.write(`config error: ${redactSecrets(message)}\n`);
     return 2;
   }
 
@@ -175,11 +176,18 @@ async function main(): Promise<number> {
   });
 }
 
+// Last-resort guards: nothing may escape as an unhandled rejection or an
+// unredacted crash dump (step 15).
+process.on('unhandledRejection', (reason: unknown) => {
+  process.stderr.write(`fatal (unhandled rejection): ${redactSecrets(String(reason))}\n`);
+  process.exitCode = 1;
+});
+
 main()
   .then((code) => {
     process.exitCode = code;
   })
   .catch((error: unknown) => {
-    process.stderr.write(`fatal: ${String(error)}\n`);
+    process.stderr.write(`fatal: ${redactSecrets(String(error))}\n`);
     process.exitCode = 1;
   });
