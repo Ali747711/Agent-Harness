@@ -12,6 +12,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: 'clear', summary: 'start a fresh session (new transcript)' },
   { name: 'cost', summary: 'token and cost breakdown for this session' },
   { name: 'model', summary: 'show the active model and effort' },
+  { name: 'status', summary: 'model, workspace, memory, permission mode, usage' },
   { name: 'sessions', summary: 'list recent sessions for this project' },
   { name: 'exit', summary: 'quit harness' }
 ];

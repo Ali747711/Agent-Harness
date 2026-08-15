@@ -188,7 +188,12 @@ export function App({
           placeholder={PLACEHOLDER}
           busy={busy}
         />
-        <Footer vm={vm} spinnerFrame={busy ? spinnerFrame : undefined} now={now} />
+        <Footer
+          vm={vm}
+          spinnerFrame={busy ? spinnerFrame : undefined}
+          now={now}
+          columns={columns}
+        />
       </Box>
     </Box>
   );

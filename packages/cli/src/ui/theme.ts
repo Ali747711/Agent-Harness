@@ -40,11 +40,13 @@ export const MODE_DISPLAY: Record<
   PermissionModeName,
   { label: string; detail: string; color: string }
 > = {
+  // Colour tracks risk, not activity: neutral while everything is gated,
+  // warning once writes land unattended, red when nothing is.
   default: { label: 'ask', detail: 'writes & commands', color: theme.color.muted },
   acceptEdits: {
     label: 'auto-edit',
     detail: 'writes allowed · commands ask',
-    color: theme.color.ok
+    color: theme.color.warning
   },
   bypass: { label: 'bypass', detail: 'nothing is gated', color: theme.color.error }
 };

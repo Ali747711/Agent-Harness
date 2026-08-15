@@ -4,10 +4,14 @@ import {
   compactTokens,
   contextPercent,
   contextWindow,
+  diffPreview,
+  fitSegments,
   formatCost,
   formatDuration,
   middleEllipsis,
-  tildePath
+  stripToolVerb,
+  tildePath,
+  toolRowText
 } from './format.ts';
 
 describe('format helpers', () => {
@@ -55,5 +59,94 @@ describe('format helpers', () => {
     expect(contextPercent(100_000, 'claude-opus-5')).toBe(10);
     expect(contextPercent(0, 'claude-opus-5')).toBe(0);
     expect(contextPercent(5_000_000, 'claude-opus-5')).toBe(100);
+  });
+});
+
+describe('tool row text', () => {
+  it('drops a leading verb that only repeats the tool column', () => {
+    expect(stripToolVerb('write', 'Write src/a.ts')).toBe('src/a.ts');
+    expect(stripToolVerb('read', 'Read src/a.ts')).toBe('src/a.ts');
+    // A title that is only the verb still has to say something.
+    expect(stripToolVerb('write', 'Write')).toBe('Write');
+    // Free-form titles (bash descriptions) are left alone.
+    expect(stripToolVerb('bash', 'run the test suite')).toBe('run the test suite');
+  });
+
+  it('splits label from result without repeating the path', () => {
+    // write/edit summaries lead with the same path the title carries.
+    expect(
+      toolRowText({ tool: 'write', title: 'Write app.html', summary: 'app.html  +76 −0' })
+    ).toEqual({ label: 'app.html', detail: '+76 −0' });
+    expect(toolRowText({ tool: 'read', title: 'Read a.ts', summary: 'read 2 of 2 lines' })).toEqual(
+      {
+        label: 'a.ts',
+        detail: 'read 2 of 2 lines'
+      }
+    );
+    expect(toolRowText({ tool: 'bash', title: 'verify output', summary: '' })).toEqual({
+      label: 'verify output',
+      detail: null
+    });
+  });
+});
+
+describe('diffPreview', () => {
+  const additions = (count: number): string =>
+    ['@@ -1,0 +1,1 @@', ...Array.from({ length: count }, (_, i) => `+line ${i}`)].join('\n');
+
+  it('shows a short patch in full', () => {
+    const text = ['@@ -1,2 +1,2 @@', '-before', '+after'].join('\n');
+    expect(diffPreview(text, 16)).toEqual({
+      lines: ['@@ -1,2 +1,2 @@', '-before', '+after'],
+      hidden: 0,
+      collapsed: false
+    });
+  });
+
+  it('excerpts a long patch that actually changes something', () => {
+    const text = ['@@ -1,40 +1,40 @@', '-gone', ...Array.from({ length: 30 }, () => '+kept')].join(
+      '\n'
+    );
+    const preview = diffPreview(text, 16);
+    expect(preview.collapsed).toBe(false);
+    expect(preview.lines).toHaveLength(16);
+    expect(preview.hidden).toBe(16);
+  });
+
+  it('collapses a long run of pure additions — the +N badge already says it', () => {
+    const preview = diffPreview(additions(76), 16);
+    expect(preview).toEqual({ lines: [], hidden: 77, collapsed: true });
+  });
+});
+
+describe('fitSegments', () => {
+  const segments = [
+    { text: 'turn 2', priority: 4 },
+    { text: '$0.11', priority: 3 },
+    { text: '2% ctx', priority: 2 },
+    { text: '1.8k tok', priority: 1 }
+  ];
+
+  it('keeps everything when there is room', () => {
+    expect(fitSegments(segments, 80)).toBe('turn 2 · $0.11 · 2% ctx · 1.8k tok');
+  });
+
+  it('sheds the lowest priority first rather than wrapping', () => {
+    expect(fitSegments(segments, 26)).toBe('turn 2 · $0.11 · 2% ctx');
+    expect(fitSegments(segments, 15)).toBe('turn 2 · $0.11');
+    // Never returns nothing: the highest priority survives any width.
+    expect(fitSegments(segments, 1)).toBe('turn 2');
+  });
+
+  it('ignores empty segments so callers can pass conditionals inline', () => {
+    expect(
+      fitSegments(
+        [
+          { text: 'turn 2', priority: 4 },
+          { text: '', priority: 9 }
+        ],
+        80
+      )
+    ).toBe('turn 2');
   });
 });

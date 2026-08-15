@@ -10,10 +10,14 @@ import type {
 import {
   compactTokens,
   contextPercent,
+  diffPreview,
+  fitSegments,
   formatCost,
   formatDuration,
   middleEllipsis,
-  tildePath
+  type Segment,
+  tildePath,
+  toolRowText
 } from './format.ts';
 import { type Block, parseMarkdown, type Span } from './markdown.ts';
 import { MODE_DISPLAY, theme } from './theme.ts';
@@ -68,10 +72,10 @@ export function Header({
 /** One dim line, not a hollow box: the session has not started yet. */
 export function EmptyState(): React.ReactElement {
   return (
-    <Box marginY={1}>
+    <Box marginTop={1}>
       <Text dimColor>
-        Ask anything {theme.glyph.bullet} /help for commands {theme.glyph.bullet} shift+tab cycles
-        permission mode
+        Ask anything {theme.glyph.bullet} /help {theme.glyph.bullet} shift+tab cycles permission
+        mode
       </Text>
     </Box>
   );
@@ -146,11 +150,30 @@ export function Markdown({ source }: { source: string }): React.ReactElement {
   );
 }
 
-export function Diff({ text, columns }: { text: string; columns?: number }): React.ReactElement {
+/**
+ * A diff is evidence, not the result. Past this many lines it stops being
+ * scannable and starts burying the conversation, so the tail is withheld —
+ * the full patch is still in the JSONL transcript.
+ */
+const DIFF_PREVIEW_LINES = 16;
+
+export function Diff({
+  text,
+  columns,
+  maxLines = DIFF_PREVIEW_LINES
+}: {
+  text: string;
+  columns?: number;
+  maxLines?: number;
+}): React.ReactElement | null {
   const width = columns === undefined ? undefined : Math.max(20, columns - 4);
+  const { lines, hidden, collapsed } = diffPreview(text, maxLines);
+  if (collapsed) {
+    return null;
+  }
   return (
     <Box flexDirection="column" marginLeft={2}>
-      {text.split('\n').map((line, index) => {
+      {lines.map((line, index) => {
         const color = line.startsWith('+')
           ? theme.color.diffAdd
           : line.startsWith('-')
@@ -169,6 +192,11 @@ export function Diff({ text, columns }: { text: string; columns?: number }): Rea
           </Text>
         );
       })}
+      {hidden > 0 ? (
+        <Text dimColor>
+          … {hidden} more diff line{hidden === 1 ? '' : 's'}
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -205,12 +233,13 @@ export function ToolRow({
     ? formatDuration(Math.max(0, (now ?? Date.now()) - line.startedAt))
     : formatDuration(line.durationMs);
   const width = columns ?? 80;
-  const detail = middleEllipsis(line.title, Math.max(16, Math.floor((width - 28) * 0.6)));
-  // The result belongs on the row itself — unless a diff below already shows
-  // it, or the call failed and the error block carries the detail.
-  const inlineSummary =
-    line.status === 'ok' && line.display === undefined && line.summary !== ''
-      ? middleEllipsis(line.summary, Math.max(12, Math.floor((width - 28) * 0.4)))
+  const { label, detail } = toolRowText(line);
+  const shownLabel = middleEllipsis(label, Math.max(16, Math.floor((width - 28) * 0.6)));
+  // The result belongs on the row itself — a failure is the exception, because
+  // its message is long enough to need the block below.
+  const shownDetail =
+    line.status !== 'error' && detail !== null
+      ? middleEllipsis(detail, Math.max(12, Math.floor((width - 28) * 0.4)))
       : null;
 
   return (
@@ -218,11 +247,11 @@ export function ToolRow({
       <Box>
         <Text color={color}>{glyph} </Text>
         <Text bold>{line.tool.padEnd(6)}</Text>
-        <Text> {detail}</Text>
-        {inlineSummary !== null ? (
+        {shownLabel === '' ? null : <Text> {shownLabel}</Text>}
+        {shownDetail !== null ? (
           <Text dimColor>
             {' '}
-            {theme.glyph.bullet} {inlineSummary}
+            {theme.glyph.bullet} {shownDetail}
           </Text>
         ) : null}
         <Text dimColor>
@@ -301,11 +330,22 @@ export function TranscriptLine({
           <Text>{item.message}</Text>
         </Box>
       );
+    // Meta, not conversation: dimmed and gutter-marked so it never reads as
+    // something the model said.
     case 'notice':
       return (
-        <Text dimColor>
-          {theme.glyph.bullet} {item.text}
-        </Text>
+        <Box marginTop={1} flexDirection="column">
+          {item.text.split('\n').map((text, index) => (
+            <Text
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
+              key={`${index}-${text.slice(0, 8)}`}
+              dimColor
+            >
+              {index === 0 ? `${theme.glyph.bullet} ` : '  '}
+              {text === '' ? ' ' : text}
+            </Text>
+          ))}
+        </Box>
       );
     default: {
       const exhaustive: never = item;
@@ -319,12 +359,15 @@ export function TranscriptLine({
 /** The one thing that stays boxed: it demands a decision. */
 export function PermissionDialog({ pending }: { pending: PendingPermission }): React.ReactElement {
   return (
+    // Hugs its content: a full-width hollow box reads as decoration, and this
+    // is the one element that must read as a question.
     <Box
       flexDirection="column"
       borderStyle="round"
       borderColor={theme.color.warning}
       paddingX={1}
       marginTop={1}
+      alignSelf="flex-start"
     >
       <Box>
         <Text bold color={theme.color.warning}>
@@ -408,15 +451,19 @@ export function InputBox({
       width="100%"
     >
       <Text color={disabled ? theme.color.muted : theme.color.accent}>{theme.glyph.prompt} </Text>
+      {/* The cursor cell is always occupied, so text never shifts by a column
+          when the prompt takes the keyboard. */}
       {value === '' ? (
         <Text>
-          {disabled ? null : <Text inverse> </Text>}
+          {disabled ? <Text> </Text> : <Text inverse> </Text>}
           <Text dimColor>{busy === true ? 'running… (esc to interrupt)' : placeholder}</Text>
         </Text>
       ) : (
         <Text>
           {before}
-          {disabled ? null : <Text inverse>{at === '' || at === '\n' ? ' ' : at}</Text>}
+          {/* Highlighting the cursor cell must not consume the character under
+              it — a frozen prompt still shows every character typed. */}
+          {disabled ? at : <Text inverse>{at === '' || at === '\n' ? ' ' : at}</Text>}
           {at === '\n' ? '\n' : ''}
           {after}
         </Text>
@@ -425,14 +472,21 @@ export function InputBox({
   );
 }
 
+/**
+ * One dense status line: permission mode on the left, live session numbers on
+ * the right. Everything here is state the user is steering by, so the full
+ * token/cache breakdown lives in /cost and /status instead of wrapping this.
+ */
 export function Footer({
   vm,
   spinnerFrame,
-  now
+  now,
+  columns = 80
 }: {
   vm: ViewModel;
   spinnerFrame?: string | undefined;
   now?: number | undefined;
+  columns?: number | undefined;
 }): React.ReactElement {
   const mode = MODE_DISPLAY[vm.permissionMode];
   const tokens = vm.usage.inputTokens + vm.usage.outputTokens;
@@ -442,32 +496,36 @@ export function Footer({
       ? formatDuration(Math.max(0, (now ?? Date.now()) - vm.turnStartedAt))
       : null;
 
+  // The mode is never dropped — it is the one thing that says what this
+  // session will do without asking.
+  const left = `${theme.glyph.mode} ${mode.label}`;
+  const showDetail = columns >= 72;
+  const leftRest = showDetail
+    ? ` ${theme.glyph.bullet} ${mode.detail} (shift+tab)`
+    : ' (shift+tab)';
+
+  // Nothing has happened yet at turn 0; "turn 0 · $0.0000" is noise, not status.
+  const segments: Segment[] = [
+    { text: vm.turn > 0 ? `turn ${vm.turn}` : '', priority: 4 },
+    { text: elapsed ?? '', priority: 5 },
+    { text: vm.queued.length > 0 ? `${vm.queued.length} queued` : '', priority: 6 },
+    { text: vm.usage.costUsd > 0 ? formatCost(vm.usage.costUsd) : '', priority: 3 },
+    { text: ctx > 0 ? `${ctx}% ctx` : '', priority: 2 },
+    { text: tokens > 0 ? `${compactTokens(tokens)} tok` : '', priority: 1 }
+  ];
+  const right = fitSegments(segments, Math.max(12, columns - (left.length + leftRest.length) - 4));
+
   return (
-    <Box flexDirection="column">
+    <Box width={columns} justifyContent="space-between">
       <Box>
-        <Text color={mode.color}>
-          {theme.glyph.mode} {mode.label}
-        </Text>
-        <Text dimColor>
-          {' '}
-          {theme.glyph.bullet} {mode.detail}
-        </Text>
-        <Text dimColor> (shift+tab)</Text>
+        <Text color={mode.color}>{left}</Text>
+        <Text dimColor>{leftRest}</Text>
       </Box>
       <Box>
         {spinnerFrame !== undefined ? (
           <Text color={theme.color.accent}>{spinnerFrame} </Text>
         ) : null}
-        <Text dimColor>
-          turn {vm.turn} {theme.glyph.bullet} {compactTokens(tokens)} tok
-          {vm.usage.cacheReadInputTokens > 0
-            ? ` ${theme.glyph.bullet} ${compactTokens(vm.usage.cacheReadInputTokens)} cached`
-            : ''}{' '}
-          {theme.glyph.bullet} {formatCost(vm.usage.costUsd)}
-          {ctx > 0 ? ` ${theme.glyph.bullet} ${ctx}% ctx` : ''}
-          {elapsed !== null ? ` ${theme.glyph.bullet} ${elapsed}` : ''}
-          {vm.queued.length > 0 ? ` ${theme.glyph.bullet} ${vm.queued.length} queued` : ''}
-        </Text>
+        <Text dimColor>{right}</Text>
       </Box>
     </Box>
   );

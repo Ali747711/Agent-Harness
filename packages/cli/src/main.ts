@@ -155,6 +155,7 @@ async function main(): Promise<number> {
     return runInteractive({
       config,
       workspaceRoot,
+      version: VERSION,
       ...(resume.id !== undefined && { resumeSessionId: resume.id })
     });
   }

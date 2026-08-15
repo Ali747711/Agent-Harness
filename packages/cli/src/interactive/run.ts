@@ -26,6 +26,8 @@ export interface InteractiveOptions {
   resumeSessionId?: string;
   transcriptDir?: string;
   indexPath?: string;
+  /** Product version for the header and /status. */
+  version?: string;
 }
 
 export interface InteractiveDeps {
@@ -84,6 +86,7 @@ export async function runInteractive(
     }),
     model: options.config.model,
     workspaceRoot: options.workspaceRoot,
+    ...(options.version !== undefined && { version: options.version }),
     permissionMode: options.config.permissionMode,
     memoryFiles: memory.map((file) => file.label),
     gitBranch,
@@ -112,7 +115,12 @@ export async function runInteractive(
     }
   });
 
-  const instance = render(createElement(App, { controller }));
+  const instance = render(
+    createElement(App, {
+      controller,
+      ...(options.version !== undefined && { version: options.version })
+    })
+  );
   try {
     await instance.waitUntilExit();
   } finally {

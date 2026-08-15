@@ -103,6 +103,27 @@ describe('markdown and diff rendering', () => {
     expect(frame).toContain('-old line');
     expect(frame).toContain('+new line');
   });
+
+  it('withholds the tail of a long diff instead of flooding the transcript', () => {
+    const text = ['-gone', ...Array.from({ length: 39 }, (_, index) => `+line ${index}`)].join(
+      '\n'
+    );
+    const { lastFrame, unmount } = render(createElement(Diff, { text }));
+    const frame = lastFrame() ?? '';
+    unmount();
+    expect(frame).toContain('+line 0');
+    expect(frame).toContain('+line 14');
+    expect(frame).not.toContain('+line 15');
+    expect(frame).toContain('… 24 more diff lines');
+  });
+
+  it('renders nothing for a long pure-addition patch — that is new content', () => {
+    const text = Array.from({ length: 76 }, (_, index) => `+line ${index}`).join('\n');
+    const { lastFrame, unmount } = render(createElement(Diff, { text }));
+    const frame = (lastFrame() ?? '').trim();
+    unmount();
+    expect(frame).toBe('');
+  });
 });
 
 describe('presentational parts', () => {
@@ -162,7 +183,32 @@ describe('presentational parts', () => {
       })
     );
     expect(done.lastFrame()).toContain('read 2 of 2 lines');
+    // The tool column already says "read"; the title must not repeat it.
+    expect(done.lastFrame()).not.toContain('Read a.ts');
     done.unmount();
+
+    // A write keeps its +/− badge on the row rather than losing it to the diff.
+    const wrote = render(
+      createElement(ToolRow, {
+        line: {
+          callId: 'c2',
+          tool: 'write',
+          title: 'Write app.html',
+          status: 'ok',
+          summary: 'app.html  +2 −0',
+          durationMs: 2600,
+          progress: '',
+          startedAt: Date.now(),
+          display: '@@ -0,0 +1,2 @@\n+a\n+b'
+        },
+        columns: 100
+      })
+    );
+    const frame = wrote.lastFrame() ?? '';
+    wrote.unmount();
+    expect(frame).toContain('app.html');
+    expect(frame).toContain('+2 −0');
+    expect(frame).toContain('2.6s');
   });
 
   it('renders the permission dialog with effects, rule, and key hints', () => {
@@ -186,32 +232,44 @@ describe('presentational parts', () => {
     expect(frame).toContain('deny');
   });
 
-  it('footer surfaces turn, tokens, cache, cost, context %, and queue', () => {
-    const { lastFrame, unmount } = render(
-      createElement(Footer, {
-        vm: vmWith({
-          turn: 2,
-          contextTokens: 100_000,
-          usage: {
-            inputTokens: 1500,
-            outputTokens: 254,
-            cacheReadInputTokens: 17_927,
-            cacheCreationInputTokens: 2900,
-            costUsd: 0.0638
-          },
-          queued: ['later']
-        })
-      })
-    );
+  const busyVm = vmWith({
+    turn: 2,
+    contextTokens: 100_000,
+    usage: {
+      inputTokens: 1500,
+      outputTokens: 254,
+      cacheReadInputTokens: 17_927,
+      cacheCreationInputTokens: 2900,
+      costUsd: 0.0638
+    },
+    queued: ['later']
+  });
+
+  it('footer surfaces turn, tokens, cost, context %, and queue', () => {
+    const { lastFrame, unmount } = render(createElement(Footer, { vm: busyVm, columns: 100 }));
     const frame = lastFrame() ?? '';
     unmount();
     expect(frame).toContain('turn 2');
     expect(frame).toContain('1.8k tok');
-    expect(frame).toContain('17.9k cached');
     expect(frame).toContain('$0.06');
     // 100k of a 1M window on opus-5.
     expect(frame).toContain('10% ctx');
     expect(frame).toContain('1 queued');
+    // The cache breakdown moved to /cost so this line never wraps.
+    expect(frame).not.toContain('cached');
+  });
+
+  it('footer sheds detail on a narrow terminal instead of wrapping', () => {
+    const { lastFrame, unmount } = render(createElement(Footer, { vm: busyVm, columns: 52 }));
+    const frame = (lastFrame() ?? '').trimEnd();
+    unmount();
+    for (const line of frame.split('\n')) {
+      expect(line.length).toBeLessThanOrEqual(52);
+    }
+    // Mode and turn are load-bearing; the token count is not.
+    expect(frame).toContain('ask');
+    expect(frame).toContain('turn 2');
+    expect(frame).not.toContain('tok');
   });
 });
 

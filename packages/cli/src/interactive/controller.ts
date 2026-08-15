@@ -10,6 +10,9 @@ import {
   withQueued,
   withUserPrompt
 } from '../state/view-model.ts';
+// Pure formatting/label modules — no React or Ink crosses this boundary.
+import { tildePath } from '../ui/format.ts';
+import { MODE_DISPLAY } from '../ui/theme.ts';
 
 /**
  * Owns the session lifecycle outside React (step 13). The Ink layer only
@@ -25,6 +28,8 @@ export interface ControllerOptions {
   session: AgentSession;
   model: string;
   workspaceRoot: string;
+  /** Shown by /status; the header takes its own copy. */
+  version?: string;
   permissionMode?: PermissionMode;
   /** Shown in the header, before session_started has fired. */
   memoryFiles?: readonly string[];
@@ -117,10 +122,17 @@ export class SessionController {
         const lines = SLASH_COMMANDS.map(
           (command) => `/${command.name.padEnd(9)} ${command.summary}`
         ).join('\n');
+        // Two short hint lines rather than one long one: a single line wraps
+        // mid-binding on an 80-column terminal.
         this.update(
           withNotice(
             this.vm,
-            `${lines}\n\nenter submit · shift+enter newline · ↑/↓ history · ctrl-w delete word · esc interrupt · ctrl-c quit`
+            [
+              lines,
+              '',
+              'enter submit · shift+enter newline · ↑/↓ history',
+              'esc interrupt · ctrl-w delete word · shift+tab permission mode · ctrl-c quit'
+            ].join('\n')
           )
         );
         return;
@@ -140,6 +152,29 @@ export class SessionController {
       case 'model':
         this.update(withNotice(this.vm, `model: ${this.options.model}`));
         return;
+      // The footer sheds detail to stay on one line; this is where it lands.
+      case 'status': {
+        const totals = this.session.usage();
+        const mode = MODE_DISPLAY[this.vm.permissionMode];
+        const branch = this.vm.gitBranch === null ? '' : ` ⎇ ${this.vm.gitBranch}`;
+        this.update(
+          withNotice(
+            this.vm,
+            [
+              `harness v${this.options.version ?? '0.0.1'} · ${this.options.model}`,
+              `workspace  ${tildePath(this.options.workspaceRoot)}${branch}`,
+              `memory     ${this.vm.memoryFiles.length === 0 ? 'none' : this.vm.memoryFiles.join(', ')}`,
+              `mode       ${mode.label} · ${mode.detail}`,
+              `session    ${this.vm.sessionId ?? 'not started'} · turn ${this.vm.turn}`,
+              `context    ${this.vm.contextTokens} tokens in the last request`,
+              `usage      ${totals.inputTokens} in · ${totals.outputTokens} out · ` +
+                `${totals.cacheReadInputTokens} cache read · ${totals.cacheCreationInputTokens} cache write · ` +
+                `$${totals.costUsd.toFixed(4)}`
+            ].join('\n')
+          )
+        );
+        return;
+      }
       case 'sessions': {
         const list = (await this.options.listSessions?.()) ?? [];
         this.update(

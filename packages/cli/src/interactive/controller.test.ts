@@ -62,6 +62,22 @@ describe('SessionController', () => {
     expect(controller.state.transcript.at(-1)).toMatchObject({ text: 'the answer' });
   });
 
+  it('/status reports the detail the footer drops, without calling the model', async () => {
+    const { controller, client } = build([{ text: 'never' }]);
+    controller.submit('/status');
+    await until(controller, (vm) => vm.transcript.length > 0);
+
+    const notice = controller.state.transcript.at(-1);
+    expect(notice).toMatchObject({ kind: 'notice' });
+    const text = (notice as { text: string }).text;
+    expect(text).toContain('claude-opus-5');
+    expect(text).toContain('workspace');
+    expect(text).toContain('cache read');
+    expect(text).toContain('ask · writes & commands');
+    // Slash commands are client-side; nothing reached the model.
+    expect(client.requests).toHaveLength(0);
+  });
+
   it('ignores empty submissions', async () => {
     const { controller, client } = build([{ text: 'never' }]);
     controller.submit('   ');
