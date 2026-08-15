@@ -120,12 +120,29 @@ describe('AgentSession loop v0', () => {
     expect(events.at(-1)).toEqual({ type: 'session_idle' });
   });
 
-  it('reports tool_use as tools_unavailable in v0', async () => {
-    const { session } = makeSession([{ toolCalls: [{ name: 'read', input: { path: 'a' } }] }]);
+  it('feeds unknown-tool errors back as tool_results and continues the loop', async () => {
+    const { session, client } = makeSession([
+      { toolCalls: [{ name: 'read', input: { path: 'a' } }] },
+      { text: 'recovered without tools' }
+    ]);
     const events = await collect(session, 'read something');
-    expect(events.find((event) => event.type === 'error')).toMatchObject({
-      code: 'tools_unavailable'
+
+    expect(client.requests).toHaveLength(2);
+    const followUp = client.requests[1]?.messages.at(-1);
+    expect(followUp?.role).toBe('user');
+    const block = followUp?.role === 'user' ? followUp.content[0] : undefined;
+    expect(block).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'mock-call-1',
+      isError: true
     });
+    if (block?.type === 'tool_result') {
+      expect(block.content).toContain('unknown tool: read');
+    }
+    expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
+      ok: false
+    });
+    expect(events.find((event) => event.type === 'turn_completed')?.stopReason).toBe('end_turn');
   });
 
   it('retries recoverable pre-start failures with a warning event', async () => {

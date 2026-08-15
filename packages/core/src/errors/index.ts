@@ -11,6 +11,7 @@ export type HarnessErrorCode =
   | 'session_not_found'
   | 'session_corrupt'
   | 'session_write_failed'
+  | 'permission_denied'
   | 'aborted'
   | 'internal';
 

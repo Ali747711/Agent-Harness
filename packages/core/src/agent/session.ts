@@ -2,7 +2,16 @@ import type { Config } from '../config/schema.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
 import type { ModelClient } from '../model/client.ts';
 import { estimateCostUsd } from '../model/pricing.ts';
-import type { AssistantBlock, ModelMessage, ModelRequest, SystemBlock } from '../model/types.ts';
+import type {
+  AssistantBlock,
+  ModelMessage,
+  ModelRequest,
+  SystemBlock,
+  ToolResultBlock,
+  ToolSpec,
+  ToolUseBlock
+} from '../model/types.ts';
+import { resolveWorkspacePath } from '../permissions/guard.ts';
 import type { AgentEvent } from '../protocol/events.ts';
 import { PROTOCOL_VERSION, type StopReason, type Usage } from '../protocol/types.ts';
 import {
@@ -12,6 +21,8 @@ import {
   type SessionSink,
   toModelMessages
 } from '../session/index.ts';
+import type { ToolRegistry } from '../tools/registry.ts';
+import type { ToolResult } from '../tools/tool.ts';
 import { sleep } from './sleep.ts';
 
 /**
@@ -27,6 +38,8 @@ export interface AgentSessionOptions {
   sessionId?: string;
   /** Transcript sink (ADR-0004). Absent = ephemeral session (tests, one-offs). */
   sink?: SessionSink;
+  /** Tool set. Absent = conversation-only agent. */
+  tools?: ToolRegistry;
   retry?: {
     /** Max retries per model request after recoverable failures. Default 3. */
     attempts?: number;
@@ -79,6 +92,7 @@ export class AgentSession {
   readonly sessionId: string;
   private readonly options: AgentSessionOptions;
   private readonly system: SystemBlock[];
+  private readonly wireTools: ToolSpec[];
   private history: ModelMessage[] = [];
   private turn = 0;
   private started = false;
@@ -88,6 +102,9 @@ export class AgentSession {
     this.options = options;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
     this.system = buildSystemPromptV0(options.workspaceRoot);
+    // Computed once: the tool list is part of the cached prefix (ADR-0008)
+    // and must be byte-identical on every request of the session.
+    this.wireTools = options.tools?.toWireSpecs() ?? [];
   }
 
   /**
@@ -207,15 +224,16 @@ export class AgentSession {
           break;
         }
         case 'tool_use': {
-          yield this.turnCompleted(stopReason, turnUsage);
-          yield {
-            type: 'error',
-            severity: 'error',
-            code: 'tools_unavailable',
-            message: 'the model requested a tool, but tool execution lands in step 7',
-            recoverable: false
-          };
-          break;
+          const batchOutcome = yield* this.executeToolBatch(outcome.content, signal);
+          if (batchOutcome === 'fatal') {
+            break;
+          }
+          if (batchOutcome === 'aborted') {
+            // Transcript already closed with interrupted tool_results (R7).
+            yield { type: 'session_idle' };
+            return;
+          }
+          continue;
         }
         case 'max_tokens': {
           yield this.turnCompleted(stopReason, turnUsage);
@@ -275,6 +293,152 @@ export class AgentSession {
     yield { type: 'session_idle' };
   }
 
+  /**
+   * Execute every tool_use block of an assistant turn sequentially, feed
+   * tool_results back as one user message (persisted), and continue the loop.
+   * Fail-closed until step 8: non-readOnly tools are refused outright — only
+   * the permission engine may unlock effects. On interrupt, pending calls get
+   * explicit "interrupted" error results FIRST so the transcript never ends
+   * on a dangling tool_use (which would make resume requests invalid).
+   */
+  private async *executeToolBatch(
+    content: AssistantBlock[],
+    signal: AbortSignal
+  ): AsyncGenerator<AgentEvent, 'continue' | 'aborted' | 'fatal', undefined> {
+    const calls = content.filter((block): block is ToolUseBlock => block.type === 'tool_use');
+    const registry = this.options.tools;
+    const results: ToolResultBlock[] = [];
+    let aborted = signal.aborted;
+
+    for (const call of calls) {
+      if (aborted) {
+        results.push({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content: 'Interrupted by user before this tool ran.',
+          isError: true
+        });
+        continue;
+      }
+
+      const registered = registry?.get(call.name);
+      const startedAt = Date.now();
+      let title = call.name;
+      let result: ToolResult;
+
+      if (registered === undefined) {
+        yield {
+          type: 'tool_call_started',
+          callId: call.id,
+          tool: call.name,
+          title,
+          input: call.input
+        };
+        result = {
+          ok: false,
+          error: {
+            message: `unknown tool: ${call.name}`,
+            hint: `available tools: ${this.wireTools.map((tool) => tool.name).join(', ') || '(none)'}`
+          }
+        };
+      } else {
+        const parsed = registered.schema.safeParse(call.input);
+        if (!parsed.success) {
+          yield {
+            type: 'tool_call_started',
+            callId: call.id,
+            tool: call.name,
+            title,
+            input: call.input
+          };
+          result = {
+            ok: false,
+            error: {
+              message: `invalid input for ${call.name}: ${parsed.error.issues
+                .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+                .join('; ')}`,
+              hint: 'fix the arguments and call the tool again'
+            }
+          };
+        } else {
+          try {
+            title = registered.renderTitle(parsed.data);
+          } catch {
+            title = call.name;
+          }
+          yield {
+            type: 'tool_call_started',
+            callId: call.id,
+            tool: call.name,
+            title,
+            input: call.input
+          };
+
+          if (!registered.readOnly) {
+            // ADR-0006 fail-closed: effects stay locked until the engine exists.
+            result = {
+              ok: false,
+              error: {
+                message: `${call.name} requires permissions; the permission engine lands in step 8`,
+                hint: 'only read-only tools are available right now'
+              }
+            };
+          } else {
+            try {
+              result = await registered.execute(parsed.data, {
+                workspaceRoot: this.options.workspaceRoot,
+                signal,
+                resolvePath: (candidate) =>
+                  resolveWorkspacePath(this.options.workspaceRoot, candidate)
+              });
+            } catch (error) {
+              if (isHarnessError(error) && error.code === 'aborted') {
+                aborted = true;
+                result = {
+                  ok: false,
+                  error: { message: 'Interrupted by user during execution.' }
+                };
+              } else {
+                result = {
+                  ok: false,
+                  error: { message: `tool crashed: ${String(error)}` }
+                };
+              }
+            }
+          }
+        }
+      }
+
+      const resultText = result.ok
+        ? result.content
+        : `Error: ${result.error.message}${result.error.hint === undefined ? '' : `\nHint: ${result.error.hint}`}`;
+      results.push({
+        type: 'tool_result',
+        toolUseId: call.id,
+        content: resultText,
+        ...(result.ok ? {} : { isError: true })
+      });
+      yield {
+        type: 'tool_call_completed',
+        callId: call.id,
+        ok: result.ok,
+        summary: result.ok ? result.summary : result.error.message.slice(0, 200),
+        durationMs: Date.now() - startedAt
+      };
+    }
+
+    this.history = [...this.history, { role: 'user', content: results }];
+    const persistError = await this.tryAppend({
+      type: 'user',
+      data: { content: results }
+    });
+    if (persistError !== null) {
+      yield this.fatal(persistError);
+      return 'fatal';
+    }
+    return aborted ? 'aborted' : 'continue';
+  }
+
   /** Append a transcript entry; failures are returned, never swallowed. */
   private async tryAppend(body: Parameters<typeof makeEntry>[1]): Promise<HarnessError | null> {
     const { sink } = this.options;
@@ -331,7 +495,7 @@ export class AgentSession {
       thinking: config.thinking,
       maxTokens: config.maxTokens,
       system: this.system,
-      tools: [],
+      tools: this.wireTools,
       messages: this.history,
       // Rolling tail breakpoint (ADR-0008); refined by the ContextPipeline in step 12.
       cacheBreakpoints: [this.history.length - 1]

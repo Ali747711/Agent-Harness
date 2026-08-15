@@ -1,6 +1,7 @@
 import {
   type AgentEvent,
   AgentSession,
+  builtinToolRegistry,
   type Config,
   createAnthropicModelClient,
   type ModelClient
@@ -47,7 +48,8 @@ export async function runHeadless(
   const session = new AgentSession({
     config: options.config,
     modelClient,
-    workspaceRoot: options.workspaceRoot
+    workspaceRoot: options.workspaceRoot,
+    tools: builtinToolRegistry()
   });
 
   const collected: AgentEvent[] = [];
