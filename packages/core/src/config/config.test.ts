@@ -27,7 +27,10 @@ describe('loadConfig', () => {
       maxTurns: 40,
       permissionMode: 'default',
       permissions: { allow: [], deny: [] },
-      memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md']
+      memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md'],
+      // Off by default: enabling it also denies all egress (the runtime has no
+      // "allow everything"), so it must be an explicit choice. See SAFETY.md.
+      sandbox: { enabled: false, allowWrite: [], denyRead: [], allowedDomains: [] }
     });
     expect(Object.values(sources).every((source) => source === 'default')).toBe(true);
   });

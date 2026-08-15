@@ -20,6 +20,32 @@ A pure, code-enforced `PermissionEngine` decides allow/ask/deny per tool call. S
 - (+) srt lands in Phase 2 as a one-implementation swap.
 - (−) MVP safety honestly depends on human-in-the-loop for bash — documented in `SAFETY.md`.
 
+## Phase 2 amendment (2026-08-16): the sandbox landed, opt-in
+
+The `CommandRunner` seam held: `SandboxedCommandRunner` (`core/src/exec/sandbox.ts`) wraps each
+command via `wrapWithSandboxArgv` and reuses the same `runProcess` machinery, so process-group
+kill, timeouts, and output caps are shared rather than reimplemented. Verified on macOS 15.7:
+a write outside the workspace is refused by the kernel; one inside succeeds.
+
+Three decisions worth recording:
+
+1. **It fails closed, never soft.** If the platform cannot sandbox or a dependency is missing,
+   an enabled sandbox refuses to run the command. Silently falling back to an unconfined shell
+   would leave a user believing they were protected — strictly worse than knowing they are not.
+2. **Default off.** The runtime has no "allow all" network setting, so enabling the sandbox also
+   denies all egress. Shipping that as the default would break `npm install` on first use and
+   get the sandbox switched off permanently. A `harness doctor` command runs real escape probes
+   so a user can verify and opt in. The default flips once allowlisted egress is verified on
+   more machines — see the caveat in `SAFETY.md`.
+3. **Read denials cover credential stores outside the workspace only.** Denying in-workspace
+   secrets (`**/.env`) would make `cat .env` fail while the `read` tool still succeeded, since
+   the sandbox governs bash and `WorkspaceGuard` governs the file tools — two different answers
+   to "is this readable?".
+
+The runtime is imported lazily (boundary rule 4 confines it to `core/src/exec/`), matching the
+`@vscode/ripgrep` lesson: packages with vendored binaries can throw at import time inside
+`bun build --compile`.
+
 ## Alternatives Considered
 
 - **Prompt-level safety** — rejected outright (PLAN.md principle 1).

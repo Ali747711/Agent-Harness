@@ -14,6 +14,7 @@ import {
 import { Command } from 'commander';
 
 import { flagsFromCli, type RawCliOptions } from './args/options.ts';
+import { runDoctor } from './doctor.ts';
 import { type OutputFormat, runHeadless } from './headless/run.ts';
 import { runInteractive } from './interactive/run.ts';
 
@@ -90,7 +91,7 @@ async function main(): Promise<number> {
     .name('harness')
     .description('local terminal coding-agent harness')
     .version(VERSION)
-    .argument('[command]', 'optional subcommand: sessions')
+    .argument('[command]', 'optional subcommand: sessions | doctor')
     .argument('[subcommand]', 'for "sessions": list')
     .option('-p, --print <prompt>', 'run one prompt headless and exit')
     .option('--output-format <format>', 'headless output: text | json | jsonl', 'text')
@@ -137,6 +138,11 @@ async function main(): Promise<number> {
       : String(error);
     process.stderr.write(`config error: ${redactSecrets(message)}\n`);
     return 2;
+  }
+
+  // Before the API key check: diagnosing your sandbox must not require a key.
+  if (command === 'doctor') {
+    return runDoctor(workspaceRoot, config);
   }
 
   if (process.env.ANTHROPIC_API_KEY === undefined) {

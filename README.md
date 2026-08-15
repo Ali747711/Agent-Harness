@@ -62,6 +62,25 @@ bun packages/cli/src/main.ts -p "say hi" --output-format jsonl
 
 Useful flags: `--model claude-sonnet-5`, `--effort low|medium|high|xhigh|max`, `--thinking adaptive|disabled`, `--max-tokens`, `--max-turns`, `--cwd`. Exit codes: `0` success, `1` failed, `130` interrupted, `2` usage/config error.
 
+## Sandboxing bash
+
+By default `bash` runs unconfined — it can read and write anything you can. Turning on the
+OS sandbox ([Seatbelt](https://developer.apple.com/) on macOS, bubblewrap on Linux) makes the
+kernel enforce the workspace boundary instead. Check your machine first:
+
+```bash
+bun packages/cli/src/main.ts doctor
+```
+
+`doctor` forces the sandbox on and runs real escape attempts through it, reporting what the
+kernel actually did — dependency presence is not confinement, only a blocked escape is. If the
+probes pass, set `sandbox.enabled` to `true`.
+
+**Egress is denied by default when the sandbox is on.** The runtime has no "allow everything"
+setting, so an empty `sandbox.allowedDomains` blocks `npm install`, `git fetch`, and `curl`.
+List the domains you need. See [SAFETY.md](SAFETY.md) for the full threat model and the known
+limitations of the egress allowlist.
+
 ## Configuration
 
 Resolution order (later wins), with per-key source tracking:
@@ -78,8 +97,14 @@ defaults → ~/.harness/config.json → <project>/.harness/config.json → HARNE
   "thinking": "adaptive",
   "maxTokens": 32000,
   "maxTurns": 40,
-  "permissionMode": "default",        // engine lands in step 8
-  "memoryFiles": ["HARNESS.md", "AGENTS.md", "CLAUDE.md"]  // loading lands in step 12
+  "permissionMode": "default",
+  "memoryFiles": ["HARNESS.md", "AGENTS.md", "CLAUDE.md"],
+  "sandbox": {
+    "enabled": false,                 // OS confinement for bash — run `doctor` first
+    "allowWrite": [],                 // extra writable roots (workspace + $TMPDIR always)
+    "denyRead": [],                   // extra denied reads (credential dirs always)
+    "allowedDomains": []              // egress allowlist; EMPTY DENIES ALL NETWORK
+  }
 }
 ```
 

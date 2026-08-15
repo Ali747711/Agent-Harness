@@ -6,7 +6,7 @@ import type { ContextPipeline } from '../context/pipeline.ts';
 import { PassthroughPipeline } from '../context/pipeline.ts';
 import { buildSystemPrompt, type EnvironmentSnapshot } from '../context/system-prompt.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
-import { DirectCommandRunner } from '../exec/direct.ts';
+import { createCommandRunner } from '../exec/policy.ts';
 import type { CommandRunner } from '../exec/runner.ts';
 import { redactSecrets } from '../logging/redact.ts';
 import type { ModelClient } from '../model/client.ts';
@@ -135,7 +135,9 @@ export class AgentSession {
   private readonly memoryLabels: string[];
 
   constructor(options: AgentSessionOptions) {
-    this.runner = options.runner ?? new DirectCommandRunner();
+    // Config decides whether bash is OS-confined; an explicit runner (tests,
+    // embedders) still wins.
+    this.runner = options.runner ?? createCommandRunner(options.workspaceRoot, options.config);
     this.options = options;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
     // Frozen once (ADR-0008): every input to the system prompt is captured

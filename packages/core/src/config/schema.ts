@@ -52,7 +52,23 @@ const configFields = {
     deny: RuleListSchema
   }),
   /** Ordered project-memory load list (ADR-0009). Later layers replace wholesale. */
-  memoryFiles: z.array(z.string().min(1))
+  memoryFiles: z.array(z.string().min(1)),
+  /**
+   * OS-level confinement for bash (ADR-0006). Off by default: the runtime's
+   * network layer could not be verified working, and it has no "allow all"
+   * setting — so enabling it also denies egress to anything not in
+   * allowedDomains. Run `harness doctor` to check this machine before
+   * turning it on.
+   */
+  sandbox: z.strictObject({
+    enabled: z.boolean(),
+    /** Extra writable roots. The workspace root is always added. */
+    allowWrite: z.array(z.string().min(1)),
+    /** Extra denied reads, on top of the credential defaults. */
+    denyRead: z.array(z.string().min(1)),
+    /** Egress allowlist. Empty denies all network from inside bash. */
+    allowedDomains: z.array(z.string().min(1))
+  })
 } as const;
 
 /** A complete, valid configuration. */
@@ -71,7 +87,8 @@ export const CONFIG_DEFAULTS: Config = {
   maxTurns: 40,
   permissionMode: 'default',
   permissions: { allow: [], deny: [] },
-  memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md']
+  memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md'],
+  sandbox: { enabled: false, allowWrite: [], denyRead: [], allowedDomains: [] }
 };
 
 export const CONFIG_KEYS = Object.keys(configFields) as ReadonlyArray<keyof Config>;

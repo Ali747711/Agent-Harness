@@ -3,6 +3,7 @@
 #   1. packages/core must not import react/ink or anything from packages/cli.
 #   2. Bun APIs (`Bun.` global, `bun:` modules) only inside core/src/runtime/.
 #   3. @anthropic-ai/sdk only inside core/src/model/anthropic/.
+#   4. @anthropic-ai/sandbox-runtime only inside core/src/exec/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,6 +24,13 @@ fi
 # Rule 3: vendor SDK confined to the Anthropic adapter (ADR-0001/0010).
 if grep -rnE "from ['\"]@anthropic-ai/sdk" packages --include='*.ts' 2>/dev/null | grep -v 'packages/core/src/model/anthropic/'; then
   echo "BOUNDARY VIOLATION: @anthropic-ai/sdk outside core/src/model/anthropic/ (rule 3)" >&2
+  fail=1
+fi
+
+# Rule 4: sandbox runtime confined to the exec adapter (ADR-0006).
+# Matches both `from '...'` and the dynamic `import('...')` the adapter uses.
+if grep -rnE "(from|import\()\s*['\"]@anthropic-ai/sandbox-runtime" packages --include='*.ts' 2>/dev/null | grep -v 'packages/core/src/exec/'; then
+  echo "BOUNDARY VIOLATION: @anthropic-ai/sandbox-runtime outside core/src/exec/ (rule 4)" >&2
   fail=1
 fi
 
