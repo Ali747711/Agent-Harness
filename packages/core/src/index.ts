@@ -7,6 +7,10 @@
  */
 export const CORE_VERSION = '0.0.1';
 
+export { AgentSession, type AgentSessionOptions } from './agent/session.ts';
 export * from './config/index.ts';
 export { HarnessError, type HarnessErrorCode, isHarnessError } from './errors/index.ts';
+export * from './model/index.ts';
+export { estimateCostUsd } from './model/pricing.ts';
 export * from './protocol/index.ts';
+export * from './session/index.ts';

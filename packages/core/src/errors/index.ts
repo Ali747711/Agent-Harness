@@ -8,6 +8,10 @@ export type HarnessErrorCode =
   | 'config_unreadable'
   | 'protocol_invalid'
   | 'model_request_failed'
+  | 'session_not_found'
+  | 'session_corrupt'
+  | 'session_write_failed'
+  | 'aborted'
   | 'internal';
 
 export interface HarnessErrorOptions {

@@ -17,7 +17,8 @@ export const StopReasonSchema = z.enum([
   'max_tokens',
   'stop_sequence',
   'refusal',
-  'pause_turn'
+  'pause_turn',
+  'model_context_window_exceeded'
 ]);
 export type StopReason = z.infer<typeof StopReasonSchema>;
 

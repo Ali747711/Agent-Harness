@@ -16,7 +16,8 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "check:boundaries": "bash scripts/check-boundaries.sh",
-    "check": "bun run typecheck && bun run lint && bun run check:boundaries && bun run test"
+    "check": "bun run typecheck && bun run lint && bun run check:boundaries && bun run test",
+    "test:live": "vitest run --config vitest.live.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
