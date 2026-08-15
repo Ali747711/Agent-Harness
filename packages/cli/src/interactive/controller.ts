@@ -26,8 +26,9 @@ export interface ControllerOptions {
   model: string;
   workspaceRoot: string;
   permissionMode?: PermissionMode;
-  /** Shown in the startup banner, before session_started has fired. */
+  /** Shown in the header, before session_started has fired. */
   memoryFiles?: readonly string[];
+  gitBranch?: string | null;
   /** Used by /clear to start a fresh conversation (and a fresh transcript). */
   newSession?: () => Promise<AgentSession> | AgentSession;
   /** Backs /sessions; injected so the controller stays free of storage concerns. */
@@ -50,7 +51,8 @@ export class SessionController {
         initialViewModel(options.model, options.workspaceRoot),
         options.permissionMode ?? 'default'
       ),
-      memoryFiles: [...(options.memoryFiles ?? [])]
+      memoryFiles: [...(options.memoryFiles ?? [])],
+      gitBranch: options.gitBranch ?? null
     };
   }
 

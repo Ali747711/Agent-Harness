@@ -6,7 +6,7 @@
     "tool_call_completed error command failed (exit 3)\n(no output)",
     "tool_call_started bash",
     "tool_call_progress",
-    "tool_call_completed ok exit 0 in <ms>",
+    "tool_call_completed ok exit 0",
     "assistant_text_delta \"Fixed and verified.\"",
     "turn_completed end_turn",
     "session_idle"
@@ -58,7 +58,7 @@
       "type": "tool_call_completed",
       "callId": "c2",
       "ok": true,
-      "summary": "exit 0 in <ms>",
+      "summary": "exit 0",
       "durationMs": "<ms>"
     },
     {

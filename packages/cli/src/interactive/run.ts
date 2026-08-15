@@ -17,6 +17,7 @@ import { createElement } from 'react';
 
 import { App } from '../ui/app.tsx';
 import { SessionController } from './controller.ts';
+import { readGitBranch } from './git.ts';
 
 export interface InteractiveOptions {
   config: Config;
@@ -54,12 +55,13 @@ export async function runInteractive(
     return 1;
   }
 
-  const [memory, environment] = await Promise.all([
+  const [memory, environment, gitBranch] = await Promise.all([
     loadProjectMemory({
       workspaceRoot: options.workspaceRoot,
       filenames: options.config.memoryFiles
     }),
-    probeEnvironment(options.workspaceRoot)
+    probeEnvironment(options.workspaceRoot),
+    readGitBranch(options.workspaceRoot)
   ]);
 
   const sessionOptions = {
@@ -84,6 +86,7 @@ export async function runInteractive(
     workspaceRoot: options.workspaceRoot,
     permissionMode: options.config.permissionMode,
     memoryFiles: memory.map((file) => file.label),
+    gitBranch,
     newSession: async () => {
       await active.sink.close().catch(() => undefined);
       active = await store.create({

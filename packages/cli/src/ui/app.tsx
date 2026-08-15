@@ -1,29 +1,31 @@
-import { Box, Static, Text, useApp, useInput } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import { useEffect, useState } from 'react';
 
 import type { SessionController } from '../interactive/controller.ts';
 import { initialInputState, reduceInput } from '../state/input-editor.ts';
 import { completions } from '../state/slash.ts';
-import type { ViewModel } from '../state/view-model.ts';
+import type { TranscriptItem, ViewModel } from '../state/view-model.ts';
 import {
-  Banner,
-  HintLine,
+  EmptyState,
+  Footer,
+  Header,
   InputBox,
+  Markdown,
   PermissionDialog,
   SlashMenu,
-  StatusBar,
-  ToolPanel,
+  ToolRow,
   TranscriptLine
 } from './parts.tsx';
 import { theme } from './theme.ts';
 
 /**
- * The Ink shell. Completed output goes through <Static> so only the live tail
- * re-renders (the rendering-cost mitigation from the plan's risk register);
- * the ticking clock is a single interval that runs ONLY while the agent is
- * working, so an idle session costs nothing.
+ * Layout: header · transcript (grows) · input · footer.
+ *
+ * Completed output goes through <Static> so only the live tail re-renders (the
+ * rendering-cost mitigation from the plan's risk register), and the clock
+ * interval runs ONLY while the agent is working, so an idle session is free.
  */
-const PLACEHOLDER = 'Ask anything, or /help for commands';
+const PLACEHOLDER = 'Ask anything, or /help';
 
 export function App({
   controller,
@@ -38,6 +40,8 @@ export function App({
   const [menuIndex, setMenuIndex] = useState(0);
   const [interruptArmed, setInterruptArmed] = useState(false);
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const columns = Math.max(40, stdout?.columns ?? 80);
 
   useEffect(() => controller.subscribe(setVm), [controller]);
 
@@ -55,7 +59,7 @@ export function App({
   const now = Date.now();
 
   useInput((char, key) => {
-    // The permission dialog owns the keyboard while it is up.
+    // The permission prompt owns the keyboard while it is up.
     if (vm.pendingPermission !== null) {
       if (char === 'y') {
         controller.respondPermission('allow_once');
@@ -87,13 +91,12 @@ export function App({
       return;
     }
 
-    // shift+tab cycles the permission mode, so the hint line is real state.
+    // shift+tab cycles the permission mode, so the footer is live state.
     if (key.tab && key.shift) {
       controller.cyclePermissionMode();
       return;
     }
 
-    // Tab completes the highlighted slash command.
     if (key.tab && menu.length > 0) {
       const chosen = menu[menuIndex % menu.length];
       if (chosen !== undefined) {
@@ -132,33 +135,50 @@ export function App({
     }
   });
 
+  // The header joins the static stream as item 0. Ink flushes <Static> output
+  // permanently ABOVE the live region, so a header rendered dynamically would
+  // end up printed below the transcript on every frame.
+  const staticItems: Array<{ id: string } & ({ header: true } | { item: TranscriptItem })> = [
+    { id: '__header', header: true },
+    ...vm.transcript.map((item) => ({ id: item.id, item }))
+  ];
+
   return (
     <Box flexDirection="column">
-      <Static items={vm.transcript}>
-        {(item) => <TranscriptLine key={item.id} item={item} />}
+      <Static items={staticItems}>
+        {(entry) =>
+          'header' in entry ? (
+            <Header key={entry.id} vm={vm} version={version} columns={columns} />
+          ) : (
+            <TranscriptLine key={entry.id} item={entry.item} columns={columns} />
+          )
+        }
       </Static>
 
-      {vm.transcript.length === 0 ? <Banner vm={vm} version={version} /> : null}
+      {vm.transcript.length === 0 ? <EmptyState /> : null}
 
       {vm.liveThinking !== '' ? (
-        <Box marginTop={1} marginLeft={1}>
+        <Box marginTop={1}>
           <Text dimColor italic>
             {vm.liveThinking}
           </Text>
         </Box>
       ) : null}
       {vm.liveText !== '' ? (
-        <Box marginTop={1} marginLeft={1}>
-          <Text>{vm.liveText}</Text>
+        <Box marginTop={1}>
+          <Markdown source={vm.liveText} />
         </Box>
       ) : null}
 
       {vm.activeTools.map((line) => (
-        <ToolPanel key={line.callId} line={line} now={now} />
+        <Box key={line.callId} marginTop={1}>
+          <ToolRow line={line} now={now} columns={columns} />
+        </Box>
       ))}
 
       {vm.pendingPermission !== null ? <PermissionDialog pending={vm.pendingPermission} /> : null}
 
+      {/* input + footer */}
       <Box marginTop={1} flexDirection="column">
         {menu.length > 0 ? <SlashMenu commands={menu} selected={menuIndex % menu.length} /> : null}
         <InputBox
@@ -166,9 +186,9 @@ export function App({
           cursor={input.cursor}
           disabled={vm.pendingPermission !== null}
           placeholder={PLACEHOLDER}
+          busy={busy}
         />
-        <HintLine vm={vm} />
-        <StatusBar vm={vm} spinnerFrame={busy ? spinnerFrame : undefined} now={now} />
+        <Footer vm={vm} spinnerFrame={busy ? spinnerFrame : undefined} now={now} />
       </Box>
     </Box>
   );

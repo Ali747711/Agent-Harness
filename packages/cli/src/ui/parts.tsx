@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+
 import type { SlashCommand } from '../state/slash.ts';
 import type {
   PendingPermission,
@@ -6,46 +7,84 @@ import type {
   TranscriptItem,
   ViewModel
 } from '../state/view-model.ts';
+import {
+  compactTokens,
+  contextPercent,
+  formatCost,
+  formatDuration,
+  middleEllipsis,
+  tildePath
+} from './format.ts';
 import { type Block, parseMarkdown, type Span } from './markdown.ts';
-import { compactTokens, formatDuration, theme } from './theme.ts';
+import { MODE_DISPLAY, theme } from './theme.ts';
 
 /**
- * Presentational components. Props in, frames out — every decision that is not
- * purely visual lives in the reducer or the controller, so these need only
- * smoke coverage.
+ * Presentational components: props in, frames out. Density is the point —
+ * chrome is thin, colour is reserved for state, and nothing is boxed unless
+ * it demands a decision from the user (permission prompts).
  */
 
-/** A titled rounded box; the building block of the panel layout. */
-export function Panel({
-  title,
-  badge,
-  color,
-  children
+export function Separator({ columns }: { columns: number }): React.ReactElement {
+  return <Text dimColor>{theme.glyph.separator.repeat(Math.max(8, columns))}</Text>;
+}
+
+// ---------------------------------------------------------------- header
+
+export function Header({
+  vm,
+  version,
+  columns
 }: {
-  title: string;
-  badge?: string | undefined;
-  color: string;
-  children: React.ReactNode;
+  vm: ViewModel;
+  version: string;
+  columns: number;
 }): React.ReactElement {
+  const cwd = middleEllipsis(tildePath(vm.workspaceRoot), Math.max(20, columns - 24));
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1} marginTop={1}>
+    <Box flexDirection="column">
       <Box>
-        <Text color={color} bold>
-          {title}
+        <Text bold color={theme.color.accent}>
+          harness
         </Text>
-        {badge !== undefined && badge !== '' ? <Text dimColor> · {badge}</Text> : null}
+        <Text dimColor> v{version} </Text>
+        <Text dimColor>{theme.glyph.bullet} </Text>
+        <Text color={theme.color.muted}>{vm.model}</Text>
+        {vm.memoryFiles.length > 0 ? (
+          <Text dimColor>
+            {' '}
+            {theme.glyph.bullet} memory: {vm.memoryFiles.join(', ')}
+          </Text>
+        ) : null}
       </Box>
-      {children}
+      <Box>
+        <Text dimColor>{cwd}</Text>
+        {vm.gitBranch !== null ? <Text dimColor> ⎇ {vm.gitBranch}</Text> : null}
+      </Box>
+      <Separator columns={columns} />
     </Box>
   );
 }
+
+/** One dim line, not a hollow box: the session has not started yet. */
+export function EmptyState(): React.ReactElement {
+  return (
+    <Box marginY={1}>
+      <Text dimColor>
+        Ask anything {theme.glyph.bullet} /help for commands {theme.glyph.bullet} shift+tab cycles
+        permission mode
+      </Text>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------- markdown
 
 function Inline({ spans }: { spans: Span[] }): React.ReactElement {
   return (
     <Text>
       {spans.map((span, index) => (
         <Text
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered or filtered
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
           key={`${index}-${span.text.slice(0, 8)}`}
           bold={span.bold === true}
           italic={span.italic === true}
@@ -64,11 +103,9 @@ function MarkdownBlock({ block }: { block: Block }): React.ReactElement | null {
       return <Text> </Text>;
     case 'heading':
       return (
-        <Box marginTop={1}>
-          <Text bold color={theme.color.accent}>
-            <Inline spans={block.spans} />
-          </Text>
-        </Box>
+        <Text bold color={theme.color.accent}>
+          <Inline spans={block.spans} />
+        </Text>
       );
     case 'bullet':
       return (
@@ -79,13 +116,12 @@ function MarkdownBlock({ block }: { block: Block }): React.ReactElement | null {
       );
     case 'code':
       return (
-        <Box flexDirection="column" marginY={0} marginLeft={1}>
-          {block.language !== '' ? <Text dimColor>{block.language}</Text> : null}
+        <Box flexDirection="column" marginLeft={2}>
           {block.lines.map((line, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered or filtered
-            <Text key={`${index}-${line.slice(0, 8)}`} color={theme.color.accent}>
-              {'│ '}
-              <Text color="white">{line}</Text>
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
+            <Text key={`${index}-${line.slice(0, 8)}`}>
+              <Text dimColor>{'│ '}</Text>
+              <Text color={theme.color.accent}>{line}</Text>
             </Text>
           ))}
         </Box>
@@ -100,36 +136,36 @@ function MarkdownBlock({ block }: { block: Block }): React.ReactElement | null {
 }
 
 export function Markdown({ source }: { source: string }): React.ReactElement {
-  const blocks = parseMarkdown(source);
   return (
     <Box flexDirection="column">
-      {blocks.map((block, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered or filtered
+      {parseMarkdown(source).map((block, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
         <MarkdownBlock key={`${index}-${block.kind}`} block={block} />
       ))}
     </Box>
   );
 }
 
-/** Unified diff with +/- colouring; the payoff of the tool `display` field. */
-export function Diff({ text }: { text: string }): React.ReactElement {
+export function Diff({ text, columns }: { text: string; columns?: number }): React.ReactElement {
+  const width = columns === undefined ? undefined : Math.max(20, columns - 4);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginLeft={2}>
       {text.split('\n').map((line, index) => {
         const color = line.startsWith('+')
-          ? theme.color.added
+          ? theme.color.diffAdd
           : line.startsWith('-')
-            ? theme.color.removed
+            ? theme.color.diffRemove
             : line.startsWith('@@')
-              ? theme.color.hunk
+              ? theme.color.diffHunk
               : undefined;
+        const shown = width === undefined ? line : middleEllipsis(line, width);
         return (
           <Text
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered or filtered
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
             key={`${index}-${line.slice(0, 10)}`}
             {...(color !== undefined ? { color } : { dimColor: true })}
           >
-            {line === '' ? ' ' : line}
+            {shown === '' ? ' ' : shown}
           </Text>
         );
       })}
@@ -137,75 +173,139 @@ export function Diff({ text }: { text: string }): React.ReactElement {
   );
 }
 
-export function ToolPanel({
+// ---------------------------------------------------------------- transcript rows
+
+/**
+ * A tool call is ONE line when it has nothing to show:
+ *   ✓ read  src/index.ts · 12ms
+ * Detail (a diff, an error, live output) is indented underneath only when it
+ * exists, so a long session stays scannable.
+ */
+export function ToolRow({
   line,
-  now
+  now,
+  columns
 }: {
   line: ToolLine;
   now?: number | undefined;
+  columns?: number | undefined;
 }): React.ReactElement {
   const running = line.status === 'running';
+  const glyph = running
+    ? theme.glyph.running
+    : line.status === 'ok'
+      ? theme.glyph.ok
+      : theme.glyph.error;
   const color = running
-    ? theme.color.toolRunning
+    ? theme.color.running
     : line.status === 'ok'
       ? theme.color.ok
       : theme.color.error;
   const elapsed = running
     ? formatDuration(Math.max(0, (now ?? Date.now()) - line.startedAt))
     : formatDuration(line.durationMs);
+  const width = columns ?? 80;
+  const detail = middleEllipsis(line.title, Math.max(16, Math.floor((width - 28) * 0.6)));
+  // The result belongs on the row itself — unless a diff below already shows
+  // it, or the call failed and the error block carries the detail.
+  const inlineSummary =
+    line.status === 'ok' && line.display === undefined && line.summary !== ''
+      ? middleEllipsis(line.summary, Math.max(12, Math.floor((width - 28) * 0.4)))
+      : null;
 
   return (
-    <Panel title={line.tool} badge={`${line.title}  ${elapsed}`} color={color}>
-      {line.display !== undefined ? <Diff text={line.display} /> : null}
-      {line.display === undefined && !running && line.summary !== '' ? (
-        <Text dimColor>{line.summary}</Text>
+    <Box flexDirection="column">
+      <Box>
+        <Text color={color}>{glyph} </Text>
+        <Text bold>{line.tool.padEnd(6)}</Text>
+        <Text> {detail}</Text>
+        {inlineSummary !== null ? (
+          <Text dimColor>
+            {' '}
+            {theme.glyph.bullet} {inlineSummary}
+          </Text>
+        ) : null}
+        <Text dimColor>
+          {' '}
+          {theme.glyph.bullet} {elapsed}
+        </Text>
+      </Box>
+      {line.display !== undefined ? <Diff text={line.display} columns={width} /> : null}
+      {line.status === 'error' && line.summary !== '' ? (
+        <Box marginLeft={2}>
+          <Text color={theme.color.error}>{middleEllipsis(line.summary, width - 4)}</Text>
+        </Box>
       ) : null}
       {running && line.progress !== '' ? (
-        <Text dimColor>{line.progress.split('\n').slice(-4).join('\n')}</Text>
+        <Box marginLeft={2} flexDirection="column">
+          {line.progress
+            .split('\n')
+            .filter((chunk) => chunk !== '')
+            .slice(-3)
+            .map((chunk, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional render product, never reordered
+              <Text key={`${index}-${chunk.slice(0, 8)}`} dimColor>
+                {middleEllipsis(chunk, width - 4)}
+              </Text>
+            ))}
+        </Box>
       ) : null}
-    </Panel>
+    </Box>
   );
 }
 
-export function TranscriptLine({ item }: { item: TranscriptItem }): React.ReactElement {
+export function TranscriptLine({
+  item,
+  columns
+}: {
+  item: TranscriptItem;
+  columns?: number | undefined;
+}): React.ReactElement {
   switch (item.kind) {
     case 'user':
       return (
-        <Panel title={theme.label.user} color={theme.color.user}>
+        <Box marginTop={1}>
+          <Text color={theme.color.accent} bold>
+            {theme.glyph.prompt}{' '}
+          </Text>
           <Text>{item.text}</Text>
-        </Panel>
+        </Box>
       );
     case 'assistant':
       return (
-        <Panel title={theme.label.assistant} color={theme.color.assistant}>
+        <Box marginTop={1}>
           <Markdown source={item.text} />
-        </Panel>
+        </Box>
       );
     case 'thinking':
       return (
-        <Box marginTop={1} marginLeft={1}>
+        <Box marginTop={1}>
           <Text dimColor italic>
             {item.text}
           </Text>
         </Box>
       );
     case 'tool':
-      return <ToolPanel line={item.line} />;
+      return (
+        <Box marginTop={1}>
+          <ToolRow line={item.line} columns={columns} />
+        </Box>
+      );
     case 'error':
       return (
-        <Panel
-          title={item.severity === 'warning' ? 'warning' : 'error'}
-          badge={item.code}
-          color={item.severity === 'warning' ? theme.color.warning : theme.color.error}
-        >
+        <Box marginTop={1}>
+          <Text color={item.severity === 'warning' ? theme.color.warning : theme.color.error}>
+            {item.severity === 'warning' ? '! ' : `${theme.glyph.error} `}
+            {item.code}:{' '}
+          </Text>
           <Text>{item.message}</Text>
-        </Panel>
+        </Box>
       );
     case 'notice':
       return (
-        <Box marginLeft={1}>
-          <Text dimColor>· {item.text}</Text>
-        </Box>
+        <Text dimColor>
+          {theme.glyph.bullet} {item.text}
+        </Text>
       );
     default: {
       const exhaustive: never = item;
@@ -214,9 +314,27 @@ export function TranscriptLine({ item }: { item: TranscriptItem }): React.ReactE
   }
 }
 
+// ---------------------------------------------------------------- prompts
+
+/** The one thing that stays boxed: it demands a decision. */
 export function PermissionDialog({ pending }: { pending: PendingPermission }): React.ReactElement {
   return (
-    <Panel title="permission required" badge={pending.tool} color={theme.color.permission}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.color.warning}
+      paddingX={1}
+      marginTop={1}
+    >
+      <Box>
+        <Text bold color={theme.color.warning}>
+          permission required
+        </Text>
+        <Text dimColor>
+          {' '}
+          {theme.glyph.bullet} {pending.tool}
+        </Text>
+      </Box>
       <Text>{pending.title}</Text>
       {pending.effects.map((effect) => (
         <Text key={`${effect.kind}-${effect.path ?? effect.command ?? ''}`} dimColor>
@@ -227,22 +345,20 @@ export function PermissionDialog({ pending }: { pending: PendingPermission }): R
         <Text dimColor>rule: {pending.suggestions[0] ?? ''}</Text>
       ) : null}
       <Box marginTop={1}>
-        <Text>
-          <Text color={theme.color.ok} bold>
-            y
-          </Text>
-          <Text dimColor> allow once · </Text>
-          <Text color={theme.color.ok} bold>
-            a
-          </Text>
-          <Text dimColor> allow for session · </Text>
-          <Text color={theme.color.error} bold>
-            n
-          </Text>
-          <Text dimColor> deny</Text>
+        <Text color={theme.color.ok} bold>
+          y
         </Text>
+        <Text dimColor> once </Text>
+        <Text color={theme.color.ok} bold>
+          a
+        </Text>
+        <Text dimColor> session </Text>
+        <Text color={theme.color.error} bold>
+          n
+        </Text>
+        <Text dimColor> deny</Text>
       </Box>
-    </Panel>
+    </Box>
   );
 }
 
@@ -254,9 +370,9 @@ export function SlashMenu({
   selected: number;
 }): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.color.muted} paddingX={1}>
+    <Box flexDirection="column" marginLeft={2}>
       {commands.map((command, index) => (
-        <Text key={command.name} inverse={index === selected}>
+        <Text key={command.name} {...(index === selected ? { inverse: true } : {})}>
           <Text color={theme.color.accent}>/{command.name.padEnd(9)}</Text>
           <Text dimColor> {command.summary}</Text>
         </Text>
@@ -265,85 +381,37 @@ export function SlashMenu({
   );
 }
 
-/**
- * Startup block: a small mark plus aligned metadata, no border — the banner
- * introduces the session, it should not look like a message.
- */
-export function Banner({ vm, version }: { vm: ViewModel; version: string }): React.ReactElement {
-  return (
-    <Box>
-      <Box flexDirection="column" marginRight={2}>
-        <Text color={theme.color.accent}>╭───╮</Text>
-        <Text color={theme.color.accent}>│ › │</Text>
-        <Text color={theme.color.accent}>╰───╯</Text>
-      </Box>
-      <Box flexDirection="column">
-        <Text>
-          <Text bold>harness </Text>
-          <Text dimColor>v{version}</Text>
-        </Text>
-        <Text dimColor>
-          {vm.model}
-          {vm.memoryFiles.length > 0 ? ` · memory: ${vm.memoryFiles.join(', ')}` : ''}
-        </Text>
-        <Text dimColor>{vm.workspaceRoot}</Text>
-      </Box>
-    </Box>
-  );
-}
+// ---------------------------------------------------------------- input + footer
 
-const MODE_HINT = {
-  default: { label: 'ask before writes and commands', color: theme.color.muted },
-  acceptEdits: { label: 'auto-accept edits on', color: theme.color.ok },
-  bypass: { label: 'bypass mode — nothing is gated', color: theme.color.error }
-} as const;
-
-/** The line under the input: current mode + how to change it (shift+tab). */
-export function HintLine({ vm }: { vm: ViewModel }): React.ReactElement {
-  const hint = MODE_HINT[vm.permissionMode];
-  return (
-    <Box>
-      <Text color={hint.color}>
-        {'▸▸ '}
-        {hint.label}
-      </Text>
-      <Text dimColor> (shift+tab to cycle)</Text>
-    </Box>
-  );
-}
-
-/**
- * Full-width bordered input. Shows ghost placeholder text when empty and a
- * block caret at the cursor, including on a multi-line draft.
- */
 export function InputBox({
   value,
   cursor,
   disabled,
-  placeholder
+  placeholder,
+  busy
 }: {
   value: string;
   cursor: number;
   disabled: boolean;
   placeholder: string;
+  busy?: boolean | undefined;
 }): React.ReactElement {
   const before = value.slice(0, cursor);
   const at = value.slice(cursor, cursor + 1);
   const after = value.slice(cursor + 1);
-  const empty = value === '';
 
   return (
     <Box
       borderStyle="round"
-      borderColor={disabled ? theme.color.muted : theme.color.muted}
+      borderColor={disabled ? theme.color.muted : theme.color.accent}
       paddingX={1}
       width="100%"
     >
-      <Text color={disabled ? theme.color.muted : theme.color.user}>{'› '}</Text>
-      {empty ? (
+      <Text color={disabled ? theme.color.muted : theme.color.accent}>{theme.glyph.prompt} </Text>
+      {value === '' ? (
         <Text>
           {disabled ? null : <Text inverse> </Text>}
-          <Text dimColor>{placeholder}</Text>
+          <Text dimColor>{busy === true ? 'running… (esc to interrupt)' : placeholder}</Text>
         </Text>
       ) : (
         <Text>
@@ -357,7 +425,7 @@ export function InputBox({
   );
 }
 
-export function StatusBar({
+export function Footer({
   vm,
   spinnerFrame,
   now
@@ -366,29 +434,43 @@ export function StatusBar({
   spinnerFrame?: string | undefined;
   now?: number | undefined;
 }): React.ReactElement {
-  const { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens } = vm.usage;
-  const tokens = inputTokens + outputTokens;
+  const mode = MODE_DISPLAY[vm.permissionMode];
+  const tokens = vm.usage.inputTokens + vm.usage.outputTokens;
+  const ctx = contextPercent(vm.contextTokens, vm.model);
   const elapsed =
     vm.turnStartedAt !== null
       ? formatDuration(Math.max(0, (now ?? Date.now()) - vm.turnStartedAt))
       : null;
 
   return (
-    <Box>
-      <Text dimColor>
-        {vm.status === 'working' && spinnerFrame !== undefined ? `${spinnerFrame} ` : ''}
-        {vm.model} · turn {vm.turn} · {compactTokens(tokens)} tok
-        {cacheReadInputTokens > 0 ? ` · ${compactTokens(cacheReadInputTokens)} cached` : ''}
-        {cacheCreationInputTokens > 0
-          ? ` · ${compactTokens(cacheCreationInputTokens)} written`
-          : ''}
-        {' · '}${vm.usage.costUsd.toFixed(4)}
-        {elapsed !== null ? ` · ${elapsed}` : ''}
-        {vm.queued.length > 0 ? ` · ${vm.queued.length} queued` : ''}
-        {vm.status === 'working' ? ' · esc to interrupt' : ''}
-      </Text>
+    <Box flexDirection="column">
+      <Box>
+        <Text color={mode.color}>
+          {theme.glyph.mode} {mode.label}
+        </Text>
+        <Text dimColor>
+          {' '}
+          {theme.glyph.bullet} {mode.detail}
+        </Text>
+        <Text dimColor> (shift+tab)</Text>
+      </Box>
+      <Box>
+        {spinnerFrame !== undefined ? (
+          <Text color={theme.color.accent}>{spinnerFrame} </Text>
+        ) : null}
+        <Text dimColor>
+          turn {vm.turn} {theme.glyph.bullet} {compactTokens(tokens)} tok
+          {vm.usage.cacheReadInputTokens > 0
+            ? ` ${theme.glyph.bullet} ${compactTokens(vm.usage.cacheReadInputTokens)} cached`
+            : ''}{' '}
+          {theme.glyph.bullet} {formatCost(vm.usage.costUsd)}
+          {ctx > 0 ? ` ${theme.glyph.bullet} ${ctx}% ctx` : ''}
+          {elapsed !== null ? ` ${theme.glyph.bullet} ${elapsed}` : ''}
+          {vm.queued.length > 0 ? ` ${theme.glyph.bullet} ${vm.queued.length} queued` : ''}
+        </Text>
+      </Box>
     </Box>
   );
 }
 
-export { compactTokens } from './theme.ts';
+export { compactTokens } from './format.ts';

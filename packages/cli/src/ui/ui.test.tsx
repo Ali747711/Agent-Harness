@@ -11,15 +11,14 @@ import { SessionController } from '../interactive/controller.ts';
 import { initialViewModel, type ViewModel } from '../state/view-model.ts';
 import { App } from './app.tsx';
 import {
-  Banner,
   compactTokens,
   Diff,
-  HintLine,
+  Footer,
+  Header,
   InputBox,
   Markdown,
   PermissionDialog,
-  StatusBar,
-  ToolPanel,
+  ToolRow,
   TranscriptLine
 } from './parts.tsx';
 
@@ -131,7 +130,7 @@ describe('presentational parts', () => {
 
   it('shows tool state, summary, and streamed progress', () => {
     const running = render(
-      createElement(ToolPanel, {
+      createElement(ToolRow, {
         line: {
           callId: 'c1',
           tool: 'bash',
@@ -149,7 +148,7 @@ describe('presentational parts', () => {
     running.unmount();
 
     const done = render(
-      createElement(ToolPanel, {
+      createElement(ToolRow, {
         line: {
           callId: 'c1',
           tool: 'read',
@@ -183,14 +182,16 @@ describe('presentational parts', () => {
     expect(frame).toContain('permission required');
     expect(frame).toContain('git status');
     expect(frame).toContain('bash(git status:*)');
-    expect(frame).toContain('allow once');
+    expect(frame).toContain('once');
+    expect(frame).toContain('deny');
   });
 
-  it('status bar surfaces cached and written tokens alongside cost', () => {
+  it('footer surfaces turn, tokens, cache, cost, context %, and queue', () => {
     const { lastFrame, unmount } = render(
-      createElement(StatusBar, {
+      createElement(Footer, {
         vm: vmWith({
           turn: 2,
+          contextTokens: 100_000,
           usage: {
             inputTokens: 1500,
             outputTokens: 254,
@@ -205,19 +206,22 @@ describe('presentational parts', () => {
     const frame = lastFrame() ?? '';
     unmount();
     expect(frame).toContain('turn 2');
+    expect(frame).toContain('1.8k tok');
     expect(frame).toContain('17.9k cached');
-    expect(frame).toContain('2.9k written');
-    expect(frame).toContain('$0.0638');
+    expect(frame).toContain('$0.06');
+    // 100k of a 1M window on opus-5.
+    expect(frame).toContain('10% ctx');
     expect(frame).toContain('1 queued');
   });
 });
 
 describe('startup chrome', () => {
-  it('banner shows version, model, memory files, and workspace', () => {
+  it('header shows version, model, memory files, workspace, and branch', () => {
     const { lastFrame, unmount } = render(
-      createElement(Banner, {
-        vm: vmWith({ memoryFiles: ['CLAUDE.md', 'AGENTS.md'] }),
-        version: '1.2.3'
+      createElement(Header, {
+        vm: vmWith({ memoryFiles: ['CLAUDE.md', 'AGENTS.md'], gitBranch: 'main' }),
+        version: '1.2.3',
+        columns: 100
       })
     );
     const frame = lastFrame() ?? '';
@@ -227,6 +231,7 @@ describe('startup chrome', () => {
     expect(frame).toContain('claude-opus-5');
     expect(frame).toContain('memory: CLAUDE.md, AGENTS.md');
     expect(frame).toContain('/work/repo');
+    expect(frame).toContain('main');
   });
 
   it('input box shows the placeholder only while empty', () => {
@@ -255,14 +260,14 @@ describe('startup chrome', () => {
     expect(frame).not.toContain('Ask anything');
   });
 
-  it('hint line names the active permission mode', () => {
+  it('footer names the active permission mode with a cycle hint', () => {
     for (const [mode, expected] of [
-      ['default', 'ask before writes'],
-      ['acceptEdits', 'auto-accept edits on'],
+      ['default', 'writes & commands'],
+      ['acceptEdits', 'writes allowed'],
       ['bypass', 'nothing is gated']
     ] as const) {
       const { lastFrame, unmount } = render(
-        createElement(HintLine, { vm: vmWith({ permissionMode: mode }) })
+        createElement(Footer, { vm: vmWith({ permissionMode: mode }) })
       );
       const frame = lastFrame() ?? '';
       unmount();
@@ -277,11 +282,11 @@ describe('App', () => {
     const controller = controllerWith([{ text: 'ok' }]);
     const { lastFrame, stdin, unmount } = render(createElement(App, { controller }));
     await settle(50);
-    expect(lastFrame()).toContain('ask before writes');
+    expect(lastFrame()).toContain('writes & commands');
 
     stdin.write('[Z'); // shift+tab
     await settle(50);
-    expect(lastFrame()).toContain('auto-accept edits on');
+    expect(lastFrame()).toContain('writes allowed');
     expect(controller.state.permissionMode).toBe('acceptEdits');
 
     stdin.write('[Z');
@@ -332,8 +337,7 @@ describe('App', () => {
     await settle();
     const frame = lastFrame() ?? '';
     unmount();
-    // The prompt moved into a 'you' panel rather than staying in the input.
-    expect(frame).toContain('you');
+    // The prompt moved into the transcript as a '›' prefixed line.
     expect(frame).toContain('hello');
   });
 });

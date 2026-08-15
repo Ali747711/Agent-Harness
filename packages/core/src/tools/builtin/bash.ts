@@ -110,7 +110,7 @@ export const bashTool: RegisteredTool = defineTool<BashInput>({
     return {
       ok: true,
       content: `${output}${truncationNote}`,
-      summary: `exit 0 in ${result.durationMs}ms`,
+      summary: `exit ${result.exitCode}`,
       metadata: { exitCode: result.exitCode, durationMs: result.durationMs }
     };
   }

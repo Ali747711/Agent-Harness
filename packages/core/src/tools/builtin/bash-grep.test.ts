@@ -49,7 +49,8 @@ describe('bash tool', () => {
     if (result.ok) {
       const root = (await ctx.resolvePath('.')).absolute;
       expect(result.content).toContain(root);
-      expect(result.summary).toMatch(/^exit 0 in \d+ms$/);
+      // The duration is reported by the UI row, not duplicated in the summary.
+      expect(result.summary).toBe('exit 0');
     }
     expect(chunks.join('')).toContain('streamed');
   });

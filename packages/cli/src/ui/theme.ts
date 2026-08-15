@@ -1,47 +1,50 @@
 /**
- * Single source of visual truth for the TUI. Colours are the 16 ANSI names
- * rather than hex, so the terminal's own palette (and the user's light/dark
- * choice) is respected instead of fought.
+ * Single source of visual truth: a calm dark palette — neutral greys for
+ * chrome, one violet accent for focus, and colour reserved for state that
+ * matters (success / warning / error). Colours are ANSI names so the user's
+ * own terminal palette wins.
  */
 export const theme = {
   color: {
-    user: 'cyan',
-    assistant: 'white',
-    thinking: 'gray',
-    tool: 'blue',
-    toolRunning: 'yellow',
-    ok: 'green',
-    error: 'red',
-    warning: 'yellow',
-    permission: 'yellow',
+    /** Primary reading text. */
+    text: 'white',
+    /** Chrome, separators, secondary metadata. */
     muted: 'gray',
-    added: 'green',
-    removed: 'red',
-    hunk: 'cyan',
-    accent: 'magenta'
+    /** Focus, prompts, code. One accent only. */
+    accent: 'magenta',
+    ok: 'green',
+    warning: 'yellow',
+    error: 'red',
+    running: 'yellow',
+    diffAdd: 'green',
+    diffRemove: 'red',
+    diffHunk: 'cyan'
   },
-  label: {
-    user: 'you',
-    assistant: 'harness',
-    thinking: 'thinking'
+  glyph: {
+    prompt: '›',
+    bullet: '·',
+    ok: '✓',
+    error: '✗',
+    running: '●',
+    mode: '●',
+    separator: '─'
   },
   spinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
   spinnerIntervalMs: 80
 } as const;
 
-export function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${ms}ms`;
-  }
-  const seconds = ms / 1000;
-  return seconds < 60
-    ? `${seconds.toFixed(1)}s`
-    : `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s`;
-}
+export type PermissionModeName = 'default' | 'acceptEdits' | 'bypass';
 
-export function compactTokens(count: number): string {
-  if (count < 1000) {
-    return String(count);
-  }
-  return `${(count / 1000).toFixed(1)}k`;
-}
+/** Footer mode descriptor: colour carries the risk level at a glance. */
+export const MODE_DISPLAY: Record<
+  PermissionModeName,
+  { label: string; detail: string; color: string }
+> = {
+  default: { label: 'ask', detail: 'writes & commands', color: theme.color.muted },
+  acceptEdits: {
+    label: 'auto-edit',
+    detail: 'writes allowed · commands ask',
+    color: theme.color.ok
+  },
+  bypass: { label: 'bypass', detail: 'nothing is gated', color: theme.color.error }
+};

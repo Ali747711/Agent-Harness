@@ -52,6 +52,10 @@ export interface ViewModel {
   turnStartedAt: number | null;
   /** Live permission mode; cycled from the TUI with shift+tab. */
   permissionMode: PermissionMode;
+  /** Shown in the header; read from .git/HEAD, never sent to the model. */
+  gitBranch: string | null;
+  /** Size of the LAST request's prompt — the basis for the "% ctx" reading. */
+  contextTokens: number;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -80,6 +84,8 @@ export function initialViewModel(model: string, workspaceRoot: string): ViewMode
     pendingPermission: null,
     turnStartedAt: null,
     permissionMode: 'default',
+    gitBranch: null,
+    contextTokens: 0,
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -129,6 +135,10 @@ export function withQueued(vm: ViewModel, queued: string[]): ViewModel {
 
 export function withPermissionMode(vm: ViewModel, permissionMode: PermissionMode): ViewModel {
   return { ...vm, permissionMode };
+}
+
+export function withGitBranch(vm: ViewModel, gitBranch: string | null): ViewModel {
+  return { ...vm, gitBranch };
 }
 
 export function withNotice(vm: ViewModel, text: string): ViewModel {
@@ -254,6 +264,10 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
       return {
         ...flushed,
         status: 'idle',
+        contextTokens:
+          event.usage.inputTokens +
+          event.usage.cacheReadInputTokens +
+          event.usage.cacheCreationInputTokens,
         usage: {
           inputTokens: flushed.usage.inputTokens + event.usage.inputTokens,
           outputTokens: flushed.usage.outputTokens + event.usage.outputTokens,
