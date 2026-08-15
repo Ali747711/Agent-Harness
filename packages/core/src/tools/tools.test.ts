@@ -8,6 +8,7 @@ import { DirectCommandRunner } from '../exec/direct.ts';
 import { resolveWorkspacePath } from '../permissions/guard.ts';
 import { globTool } from './builtin/glob.ts';
 import { readTool } from './builtin/read.ts';
+import { builtinToolRegistry } from './index.ts';
 import { ToolRegistry } from './registry.ts';
 import { defineTool, type ToolContext } from './tool.ts';
 import { FileTracker } from './tracker.ts';
@@ -69,6 +70,51 @@ describe('ToolRegistry', () => {
     expect(schema.additionalProperties).toBe(false);
     expect(schema.$schema).toBeUndefined();
     expect(schema.type).toBe('object');
+  });
+
+  it('strips numeric-range keywords the API rejects on integer/number types', () => {
+    // Live 400 regression: "For 'integer' type, properties exclusiveMinimum,
+    // maximum are not supported". Zod still enforces the bounds at runtime.
+    const banned = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'];
+
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        for (const [index, item] of node.entries()) {
+          walk(item, `${path}[${index}]`);
+        }
+        return;
+      }
+      if (node === null || typeof node !== 'object') {
+        return;
+      }
+      const record = node as Record<string, unknown>;
+      if (record.type === 'integer' || record.type === 'number') {
+        for (const keyword of banned) {
+          expect({ path, keyword, present: keyword in record }).toEqual({
+            path,
+            keyword,
+            present: false
+          });
+        }
+      }
+      for (const [key, value] of Object.entries(record)) {
+        walk(value, `${path}.${key}`);
+      }
+    };
+
+    const specs = builtinToolRegistry().toWireSpecs();
+    // The builtins that actually carry bounded integers must be covered.
+    expect(specs.map((spec) => spec.name)).toContain('read');
+    for (const spec of specs) {
+      walk(spec.inputSchema, spec.name);
+    }
+  });
+
+  it('keeps the runtime schema strict even though the wire schema is relaxed', () => {
+    const read = builtinToolRegistry().get('read');
+    expect(read?.schema.safeParse({ path: 'a.ts', limit: 0 }).success).toBe(false);
+    expect(read?.schema.safeParse({ path: 'a.ts', limit: 99_999 }).success).toBe(false);
+    expect(read?.schema.safeParse({ path: 'a.ts', limit: 100 }).success).toBe(true);
   });
 });
 

@@ -9,6 +9,40 @@ import type { RegisteredTool } from './tool.ts';
  * byte-stable wire specs — the tool list is part of the cached prompt prefix,
  * so two constructions of the same registry MUST serialize identically.
  */
+
+/**
+ * The API's tool-schema validator rejects numeric-range keywords on
+ * integer/number types (live 400: "For 'integer' type, properties
+ * exclusiveMinimum, maximum are not supported"). Strip them from the wire —
+ * the loop re-validates inputs with the full Zod schema before execution,
+ * so the bounds still hold at runtime.
+ */
+const UNSUPPORTED_NUMERIC_KEYWORDS = [
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf'
+] as const;
+
+function sanitizeForWire(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(sanitizeForWire);
+  }
+  if (node === null || typeof node !== 'object') {
+    return node;
+  }
+  const output: Record<string, unknown> = {};
+  const source = node as Record<string, unknown>;
+  const isNumeric = source.type === 'integer' || source.type === 'number';
+  for (const [key, value] of Object.entries(source)) {
+    if (isNumeric && (UNSUPPORTED_NUMERIC_KEYWORDS as readonly string[]).includes(key)) {
+      continue;
+    }
+    output[key] = sanitizeForWire(value);
+  }
+  return output;
+}
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
 
@@ -30,10 +64,11 @@ export class ToolRegistry {
 
   toWireSpecs(): ToolSpec[] {
     return this.list().map((tool) => {
-      const schema = z.toJSONSchema(tool.schema) as Record<string, unknown>;
+      const raw = z.toJSONSchema(tool.schema) as Record<string, unknown>;
       // The $schema marker is meta-noise on the wire and a cache-stability
       // hazard if the emitting library changes its default dialect.
-      delete schema.$schema;
+      delete raw.$schema;
+      const schema = sanitizeForWire(raw) as Record<string, unknown>;
       return {
         name: tool.name,
         description: tool.description,
