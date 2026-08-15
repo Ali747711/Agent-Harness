@@ -1,6 +1,10 @@
 import { sep } from 'node:path';
 
 import type { Config } from '../config/schema.ts';
+import type { MemoryFile } from '../context/memory.ts';
+import type { ContextPipeline } from '../context/pipeline.ts';
+import { PassthroughPipeline } from '../context/pipeline.ts';
+import { buildSystemPrompt, type EnvironmentSnapshot } from '../context/system-prompt.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
 import { DirectCommandRunner } from '../exec/direct.ts';
 import type { CommandRunner } from '../exec/runner.ts';
@@ -39,10 +43,10 @@ import { makeChannel } from './channel.ts';
 import { sleep } from './sleep.ts';
 
 /**
- * Agent loop v0 (PHASE1-PLAN.md step 4): no tools yet. Owns turn state,
- * exhaustive stop_reason handling, retry policy (the ModelClient never
- * retries), cancellation, and the maxTurns guard. Emits protocol events only —
- * never writes to stdout (ADR-0003).
+ * The agent loop. Owns turn state, exhaustive stop_reason handling, retry
+ * policy (the ModelClient never retries), cancellation, the maxTurns guard,
+ * tool execution behind the permission gate, and transcript persistence.
+ * Emits protocol events only — never writes to stdout (ADR-0003).
  */
 export interface AgentSessionOptions {
   config: Config;
@@ -63,6 +67,10 @@ export interface AgentSessionOptions {
   ) => Promise<PermissionChoice>;
   /** Shell execution seam (step 10); defaults to the unsandboxed runner. */
   runner?: CommandRunner;
+  /** Loaded once by the caller at session start (ADR-0009). */
+  memory?: readonly MemoryFile[];
+  /** Environment facts, snapshotted once — never re-read per turn (ADR-0008). */
+  environment?: EnvironmentSnapshot;
   retry?: {
     /** Max retries per model request after recoverable failures. Default 3. */
     attempts?: number;
@@ -87,22 +95,14 @@ function addUsage(a: Usage, b: Usage): Usage {
   };
 }
 
-/**
- * Minimal frozen system prompt. The full SystemPromptBuilder (identity, env
- * snapshot, project memory) lands in step 12 — the freeze discipline
- * (ADR-0008: byte-identical across turns) starts now.
- */
-function buildSystemPromptV0(workspaceRoot: string): SystemBlock[] {
-  return [
-    {
-      text: [
-        'You are Harness, a coding agent that runs in a terminal.',
-        'Be direct and concise. When asked about code, ground answers in the given context.',
-        `Working directory: ${workspaceRoot}`
-      ].join('\n'),
-      cache: true
-    }
-  ];
+/** Fallback when the caller supplies no snapshot; still frozen per session. */
+function defaultEnvironment(workspaceRoot: string): EnvironmentSnapshot {
+  return {
+    workspaceRoot,
+    platform: process.platform,
+    date: new Date().toISOString().slice(0, 10),
+    isGitRepo: false
+  };
 }
 
 interface TurnOutcome {
@@ -130,15 +130,30 @@ export class AgentSession {
   private readonly permissions: PermissionEngine;
   private readonly fileTracker = new FileTracker();
   private readonly runner: CommandRunner;
+  private readonly pipeline: ContextPipeline;
+  private readonly memoryLabels: string[];
 
   constructor(options: AgentSessionOptions) {
     this.runner = options.runner ?? new DirectCommandRunner();
     this.options = options;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
-    this.system = buildSystemPromptV0(options.workspaceRoot);
+    // Frozen once (ADR-0008): every input to the system prompt is captured
+    // here, so the cached prefix is byte-identical on every later turn.
+    const memory = options.memory ?? [];
+    this.memoryLabels = memory.map((file) => file.label);
+    this.system = buildSystemPrompt(
+      options.environment ?? defaultEnvironment(options.workspaceRoot),
+      memory
+    );
     // Computed once: the tool list is part of the cached prefix (ADR-0008)
     // and must be byte-identical on every request of the session.
     this.wireTools = options.tools?.toWireSpecs() ?? [];
+    this.pipeline = new PassthroughPipeline({
+      config: options.config,
+      system: this.system,
+      tools: this.wireTools,
+      capabilities: options.modelClient.capabilities(options.config.model)
+    });
     // Rules were schema-validated at config load; this re-parse cannot fail
     // for config-sourced rules and fails fast for programmatic ones.
     this.permissions = new PermissionEngine({
@@ -172,6 +187,11 @@ export class AgentSession {
     return this.history;
   }
 
+  /** Session-wide token/cost totals from API usage fields only (R9). */
+  usage() {
+    return this.pipeline.totals();
+  }
+
   async *run(prompt: string, signal: AbortSignal): AsyncGenerator<AgentEvent> {
     const { config } = this.options;
 
@@ -183,7 +203,7 @@ export class AgentSession {
         protocolVersion: PROTOCOL_VERSION,
         model: config.model,
         workspaceRoot: this.options.workspaceRoot,
-        memoryFiles: [] // loaded by the ContextPipeline from step 12
+        memoryFiles: this.memoryLabels
       };
     }
 
@@ -697,17 +717,7 @@ export class AgentSession {
     const maxAttempts = (retry?.attempts ?? 3) + 1;
     const baseDelayMs = retry?.baseDelayMs ?? 500;
 
-    const request: ModelRequest = {
-      model: config.model,
-      effort: config.effort,
-      thinking: config.thinking,
-      maxTokens: config.maxTokens,
-      system: this.system,
-      tools: this.wireTools,
-      messages: this.history,
-      // Rolling tail breakpoint (ADR-0008); refined by the ContextPipeline in step 12.
-      cacheBreakpoints: [this.history.length - 1]
-    };
+    const request: ModelRequest = this.pipeline.build({ messages: this.history });
 
     for (let attempt = 1; ; attempt += 1) {
       // Nothing yielded yet this attempt — safe to retry without duplicate output.
@@ -732,6 +742,7 @@ export class AgentSession {
               emitted = true;
               break;
             case 'message_stop':
+              this.pipeline.observeUsage(event.usage);
               return {
                 stopReason: event.stopReason,
                 content: event.content,

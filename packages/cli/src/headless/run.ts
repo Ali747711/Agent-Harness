@@ -5,8 +5,10 @@ import {
   type Config,
   createAnthropicModelClient,
   JsonlSessionStore,
+  loadProjectMemory,
   type ModelClient,
   type OpenedSession,
+  probeEnvironment,
   projectSessionsDir
 } from '@harness/core';
 
@@ -82,11 +84,22 @@ export async function runHeadless(
     }
   }
 
+  // Loaded once, then frozen into the system prompt (ADR-0008/0009).
+  const [memory, environment] = await Promise.all([
+    loadProjectMemory({
+      workspaceRoot: options.workspaceRoot,
+      filenames: options.config.memoryFiles
+    }),
+    probeEnvironment(options.workspaceRoot)
+  ]);
+
   const sessionOptions = {
     config: options.config,
     modelClient,
     workspaceRoot: options.workspaceRoot,
-    tools: builtinToolRegistry()
+    tools: builtinToolRegistry(),
+    memory,
+    environment
   };
   const session =
     opened === null
