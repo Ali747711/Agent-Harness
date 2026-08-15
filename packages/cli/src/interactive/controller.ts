@@ -33,6 +33,8 @@ export interface ControllerOptions {
   permissionMode?: PermissionMode;
   /** Shown in the header, before session_started has fired. */
   memoryFiles?: readonly string[];
+  /** Sandbox state for the header and /status. */
+  sandbox?: { enabled: boolean; allowedDomains: readonly string[] };
   gitBranch?: string | null;
   /** Used by /clear to start a fresh conversation (and a fresh transcript). */
   newSession?: () => Promise<AgentSession> | AgentSession;
@@ -57,7 +59,11 @@ export class SessionController {
         options.permissionMode ?? 'default'
       ),
       memoryFiles: [...(options.memoryFiles ?? [])],
-      gitBranch: options.gitBranch ?? null
+      gitBranch: options.gitBranch ?? null,
+      sandbox: {
+        enabled: options.sandbox?.enabled ?? false,
+        allowedDomains: [...(options.sandbox?.allowedDomains ?? [])]
+      }
     };
   }
 
@@ -165,6 +171,15 @@ export class SessionController {
               `workspace  ${tildePath(this.options.workspaceRoot)}${branch}`,
               `memory     ${this.vm.memoryFiles.length === 0 ? 'none' : this.vm.memoryFiles.join(', ')}`,
               `mode       ${mode.label} · ${mode.detail}`,
+              `sandbox    ${
+                this.vm.sandbox.enabled
+                  ? `on · egress: ${
+                      this.vm.sandbox.allowedDomains.length === 0
+                        ? 'all denied'
+                        : this.vm.sandbox.allowedDomains.join(', ')
+                    }`
+                  : 'off — bash is not confined (see SAFETY.md)'
+              }`,
               `session    ${this.vm.sessionId ?? 'not started'} · turn ${this.vm.turn}`,
               `context    ${this.vm.contextTokens} tokens in the last request`,
               `usage      ${totals.inputTokens} in · ${totals.outputTokens} out · ` +

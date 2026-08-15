@@ -63,6 +63,19 @@ export function Header({
       <Box>
         <Text dimColor>{cwd}</Text>
         {vm.gitBranch !== null ? <Text dimColor> ⎇ {vm.gitBranch}</Text> : null}
+        {/* Only shown when ON: an always-present "unsandboxed" badge would
+            become wallpaper, and this must read as a live state change. */}
+        {vm.sandbox.enabled ? (
+          <Text color={theme.color.ok}>
+            {' '}
+            {theme.glyph.bullet} sandboxed
+            {vm.sandbox.allowedDomains.length === 0
+              ? ' (no network)'
+              : ` (${vm.sandbox.allowedDomains.length} domain${
+                  vm.sandbox.allowedDomains.length === 1 ? '' : 's'
+                })`}
+          </Text>
+        ) : null}
       </Box>
       <Separator columns={columns} />
     </Box>

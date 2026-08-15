@@ -54,6 +54,11 @@ export interface ViewModel {
   permissionMode: PermissionMode;
   /** Shown in the header; read from .git/HEAD, never sent to the model. */
   gitBranch: string | null;
+  /**
+   * Sandbox state, shown in the header. A confinement you cannot see is one
+   * you cannot trust — and its absence is exactly as important to show.
+   */
+  sandbox: { enabled: boolean; allowedDomains: string[] };
   /** Size of the LAST request's prompt — the basis for the "% ctx" reading. */
   contextTokens: number;
   usage: {
@@ -85,6 +90,7 @@ export function initialViewModel(model: string, workspaceRoot: string): ViewMode
     turnStartedAt: null,
     permissionMode: 'default',
     gitBranch: null,
+    sandbox: { enabled: false, allowedDomains: [] },
     contextTokens: 0,
     usage: {
       inputTokens: 0,

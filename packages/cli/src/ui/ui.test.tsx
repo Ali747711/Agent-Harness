@@ -292,6 +292,35 @@ describe('startup chrome', () => {
     expect(frame).toContain('main');
   });
 
+  it('header shows the sandbox badge only when confinement is actually on', () => {
+    const off = render(createElement(Header, { vm: vmWith({}), version: '1.0.0', columns: 100 }));
+    expect(off.lastFrame()).not.toContain('sandboxed');
+    off.unmount();
+
+    const on = render(
+      createElement(Header, {
+        vm: vmWith({ sandbox: { enabled: true, allowedDomains: ['registry.npmjs.org'] } }),
+        version: '1.0.0',
+        columns: 100
+      })
+    );
+    expect(on.lastFrame()).toContain('sandboxed');
+    expect(on.lastFrame()).toContain('1 domain');
+    on.unmount();
+
+    // Enabled with an empty allowlist means no network at all — the single
+    // most surprising consequence, so it is spelled out rather than implied.
+    const locked = render(
+      createElement(Header, {
+        vm: vmWith({ sandbox: { enabled: true, allowedDomains: [] } }),
+        version: '1.0.0',
+        columns: 100
+      })
+    );
+    expect(locked.lastFrame()).toContain('no network');
+    locked.unmount();
+  });
+
   it('input box shows the placeholder only while empty', () => {
     const empty = render(
       createElement(InputBox, {

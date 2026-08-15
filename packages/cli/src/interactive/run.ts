@@ -90,6 +90,10 @@ export async function runInteractive(
     ...(options.version !== undefined && { version: options.version }),
     permissionMode: options.config.permissionMode,
     memoryFiles: memory.map((file) => file.label),
+    sandbox: {
+      enabled: options.config.sandbox.enabled,
+      allowedDomains: options.config.sandbox.allowedDomains
+    },
     gitBranch,
     newSession: async () => {
       await active.sink.close().catch(() => undefined);
