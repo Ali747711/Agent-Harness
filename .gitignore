@@ -1,0 +1,15 @@
+# deps / build
+node_modules/
+dist/
+coverage/
+
+# env & secrets
+.env
+.env.*
+
+# os / editor
+.DS_Store
+*.log
+
+# spike artifacts are throwaway (plan step 1)
+spike/

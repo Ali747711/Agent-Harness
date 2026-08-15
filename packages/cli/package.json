@@ -1,0 +1,19 @@
+{
+  "name": "@harness/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "harness": "./src/main.ts"
+  },
+  "dependencies": {
+    "@harness/core": "workspace:*",
+    "commander": "^15.0.0",
+    "ink": "^7.1.1",
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "ink-testing-library": "^4.0.0"
+  }
+}

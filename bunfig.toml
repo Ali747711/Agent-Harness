@@ -1,0 +1,4 @@
+# Bun configuration (ADR-0002). Lifecycle-script trust lives in package.json
+# ("trustedDependencies") so it is visible next to the dependency list.
+[install]
+exact = false

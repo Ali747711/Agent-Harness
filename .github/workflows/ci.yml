@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run check:boundaries
+      - run: bun run typecheck
+      - run: bun run test
+
+  # Portability canary (ADR-0002): the codebase must keep typechecking with
+  # tsc executed under Node — catches accidental Bun-only type coupling
+  # outside core/src/runtime/.
+  node-canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: node node_modules/typescript/bin/tsc --noEmit -p packages/core
+      - run: node node_modules/typescript/bin/tsc --noEmit -p packages/cli
