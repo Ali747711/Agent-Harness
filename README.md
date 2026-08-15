@@ -10,7 +10,7 @@ The deterministic infrastructure that turns a frontier model into a coding agent
 
 - **One simple agent loop** with exhaustive stop-reason handling, retry policy, and cancellation — power lives in the periphery (tools, permissions, context), not in orchestration cleverness
 - **A serializable event protocol** between the runtime core and every client — the headless JSONL mode is the proof, and later clients (IDE, web) are transport work, not loop surgery
-- **Safety enforced in code**, never in prompts: a permission engine with non-bypassable workspace confinement (step 8), OS sandboxing planned via `sandbox-runtime` (Phase 2)
+- **Safety enforced in code**, never in prompts: a permission engine with non-bypassable workspace confinement, plus opt-in OS sandboxing of `bash` via `sandbox-runtime` (Seatbelt / bubblewrap)
 - **Append-only JSONL transcripts** as the source of truth — sessions survive `kill -9` and resume with byte-identical model history
 
 It deliberately does **not** wrap the Claude Agent SDK — owning the loop is the point (see [ADR-0001](docs/adr/0001-own-the-agent-loop.md)).
@@ -78,8 +78,8 @@ probes pass, set `sandbox.enabled` to `true`.
 
 **Egress is denied by default when the sandbox is on.** The runtime has no "allow everything"
 setting, so an empty `sandbox.allowedDomains` blocks `npm install`, `git fetch`, and `curl`.
-List the domains you need. See [SAFETY.md](SAFETY.md) for the full threat model and the known
-limitations of the egress allowlist.
+List the domains you need — verified working: an allowlisted host connects while unlisted ones
+are refused. See [SAFETY.md](SAFETY.md) for the full threat model.
 
 ## Configuration
 
@@ -123,7 +123,7 @@ fixtures/       # cassettes (recorded SSE streams), golden snapshots, test works
 scripts/        # check-boundaries.sh — CI-enforced dependency rules
 ```
 
-Three boundary rules, enforced in CI: `core` never imports UI; `Bun.*` APIs only inside `core/src/runtime/`; `@anthropic-ai/sdk` only inside `core/src/model/anthropic/`.
+Four boundary rules, enforced in CI: `core` never imports UI; `Bun.*` APIs only inside `core/src/runtime/`; `@anthropic-ai/sdk` only inside `core/src/model/anthropic/`; `@anthropic-ai/sandbox-runtime` only inside `core/src/exec/`.
 
 ## Development
 

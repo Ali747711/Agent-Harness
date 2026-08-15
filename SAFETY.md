@@ -33,12 +33,15 @@ presence is not confinement; only a blocked escape is. If every probe passes, se
 empty list denies *all* egress from bash, so `npm install`, `git fetch`, and `curl` will fail.
 That is a deliberate default, but it is the thing most likely to surprise you.
 
-Two limitations found while building this, stated rather than buried:
+Verified end to end on macOS 15.7: an allowlisted host returns 200 while unlisted hosts
+(`cloudflare.com`, `registry.npmjs.org`) are blocked, and a write outside `allowWrite` is
+refused by the kernel.
 
-- Egress filtering routes through a local proxy. On the development machine this was
-  verified to **block** traffic, but allowlisted domains could not be verified as reachable
-  (the proxy accepted the CONNECT and then hung upstream, with no violation recorded). Run
-  `harness doctor` and try a real `npm install` before depending on an allowlist.
+Two things to know, stated rather than buried:
+
+- **`$TMPDIR` is writable**, in addition to the workspace, because build tools legitimately
+  need it. "Confined to the workspace" is therefore slightly stronger than what is enforced;
+  `harness doctor` prints the real writable set.
 - The sandbox governs **bash only**. The file tools are confined by `WorkspaceGuard`, which is
   a separate mechanism and is always on.
 
@@ -78,8 +81,8 @@ Two limitations found while building this, stated rather than buried:
    `Operation not permitted`.
 
 2. **With the sandbox off, there is no network restriction.** A command may fetch or exfiltrate
-   freely. With it on, egress is denied except to `sandbox.allowedDomains` — see the caveat
-   above about verifying an allowlist actually works on your machine.
+   freely. With it on, egress is denied except to `sandbox.allowedDomains`, which is enforced
+   by a local proxy rather than by the kernel.
 
 2b. **Even with the sandbox on, reads are broadly permitted.** Only the listed credential
    directories are denied. A command can still read most of your filesystem; the sandbox's
@@ -128,9 +131,10 @@ behavior, not a bug.
 
 `@anthropic-ai/sandbox-runtime` now drops in behind the `CommandRunner` seam
 (`packages/core/src/exec/runner.ts`) as `SandboxedCommandRunner`, so items 1–2 above are
-enforced rather than advisory **when it is enabled**. Still to come: making it the default
-once allowlisted egress is verified on more machines, checkpoints/rewind, and the
-catastrophic-command denylist.
+enforced rather than advisory **when it is enabled**. It stays opt-in because the default
+allowlist is empty, so switching it on by default would deny egress to every existing user's
+`npm install` — the fix is a sensible starter allowlist, not a flag flip. Still to come:
+that default, checkpoints/rewind, and the catastrophic-command denylist.
 
 ## Reporting
 

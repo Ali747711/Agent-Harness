@@ -35,8 +35,19 @@ Three decisions worth recording:
 2. **Default off.** The runtime has no "allow all" network setting, so enabling the sandbox also
    denies all egress. Shipping that as the default would break `npm install` on first use and
    get the sandbox switched off permanently. A `harness doctor` command runs real escape probes
-   so a user can verify and opt in. The default flips once allowlisted egress is verified on
-   more machines — see the caveat in `SAFETY.md`.
+   so a user can verify and opt in. Flipping the default needs a sensible starter allowlist
+   first, not just a changed boolean.
+
+   *A near-miss worth recording:* egress initially appeared broken — allowlisted hosts hung
+   instead of connecting, on two different machines. The cause was ours: `toRuntimeConfig`
+   omitted `network.deniedDomains` and `filesystem.denyWrite`, both **required** by
+   `SandboxRuntimeConfigSchema`. `SandboxManager.initialize()` does not validate, so it accepted
+   the config and the proxy then took each CONNECT and hung — indistinguishable from a working
+   deny-all. The package's own CLI rejects that same config outright, which is how it was found.
+   `assertRuntimeConfig` now validates against the runtime's schema before `initialize`, and a
+   unit test asserts the mapping still satisfies it — a check that needs no network and would
+   have caught this immediately. The lesson generalizes: **a permissive parser on a security
+   boundary turns a config bug into a silent policy change.**
 3. **Read denials cover credential stores outside the workspace only.** Denying in-workspace
    secrets (`**/.env`) would make `cat .env` fail while the `read` tool still succeeded, since
    the sandbox governs bash and `WorkspaceGuard` governs the file tools — two different answers

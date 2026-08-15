@@ -10,6 +10,7 @@ import { DirectCommandRunner } from './direct.ts';
 import { createCommandRunner, credentialDenyPaths, sandboxPolicyFor } from './policy.ts';
 import type { CommandRunOptions } from './runner.ts';
 import {
+  assertRuntimeConfig,
   mergeSandboxEnv,
   probeSandbox,
   SandboxedCommandRunner,
@@ -107,8 +108,43 @@ describe('policy mapping', () => {
   it('emits the network key the runtime requires', () => {
     // Omitting `network` makes the runtime throw on network.parentProxy.
     const config = toRuntimeConfig({ allowWrite: ['/w'], denyRead: [], allowedDomains: [] });
-    expect(config.network).toEqual({ allowedDomains: [] });
+    expect(config.network.allowedDomains).toEqual([]);
     expect(config.filesystem.allowWrite).toEqual(['/w']);
+  });
+
+  it('emits the empty deny lists the runtime schema requires', async () => {
+    // Regression: omitting deniedDomains/denyWrite produced a config that
+    // initialize() ACCEPTED and then broke — the proxy took the CONNECT and
+    // hung upstream forever, indistinguishable from "egress is denied".
+    // Validating against the runtime's own schema catches it with no network.
+    const { SandboxRuntimeConfigSchema } = await import('@anthropic-ai/sandbox-runtime');
+    const config = toRuntimeConfig({
+      allowWrite: ['/w'],
+      denyRead: ['/secret'],
+      allowedDomains: ['example.com']
+    });
+    expect(SandboxRuntimeConfigSchema.safeParse(config).success).toBe(true);
+  });
+});
+
+describe('assertRuntimeConfig', () => {
+  const schema = {
+    safeParse: (value: unknown) =>
+      (value as { network?: { deniedDomains?: unknown } }).network?.deniedDomains === undefined
+        ? { success: false, error: { issues: [{ path: ['network', 'deniedDomains'] }] } }
+        : { success: true }
+  };
+
+  it('refuses a config the runtime would accept and then misbehave on', () => {
+    expect(() => assertRuntimeConfig(schema, { network: {} })).toThrow(/network.deniedDomains/);
+  });
+
+  it('passes a valid config through', () => {
+    expect(() => assertRuntimeConfig(schema, { network: { deniedDomains: [] } })).not.toThrow();
+  });
+
+  it('is a no-op when the runtime exposes no schema', () => {
+    expect(() => assertRuntimeConfig(null, { anything: true })).not.toThrow();
   });
 });
 

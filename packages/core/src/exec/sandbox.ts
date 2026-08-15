@@ -54,11 +54,37 @@ export interface SandboxManagerLike {
   cleanupAfterCommand(): void;
 }
 
+/** Structural view of the runtime's own zod schema (it bundles zod 3). */
+interface ConfigSchemaLike {
+  safeParse(value: unknown): { success: boolean; error?: { issues: { path: unknown[] }[] } };
+}
+
+let configSchema: ConfigSchemaLike | null = null;
+
+/**
+ * Validate against the runtime's OWN schema before handing it over.
+ * `initialize()` accepts an incomplete config and then fails silently at
+ * runtime, so this is the only place a missing field can be caught.
+ */
+export function assertRuntimeConfig(schema: ConfigSchemaLike | null, config: unknown): void {
+  const result = schema?.safeParse(config);
+  if (result !== undefined && !result.success) {
+    const fields = (result.error?.issues ?? []).map((issue) => issue.path.join('.')).join(', ');
+    throw new HarnessError(
+      'internal',
+      `sandbox config rejected by the runtime schema (${fields}) — refusing to run with a ` +
+        'config that would silently misbehave'
+    );
+  }
+}
+
 async function loadManager(): Promise<SandboxManagerLike> {
   try {
     const runtime = (await import('@anthropic-ai/sandbox-runtime')) as {
       SandboxManager: SandboxManagerLike;
+      SandboxRuntimeConfigSchema?: ConfigSchemaLike;
     };
+    configSchema = runtime.SandboxRuntimeConfigSchema ?? null;
     return runtime.SandboxManager;
   } catch (error) {
     throw new HarnessError(
@@ -88,16 +114,30 @@ export function mergeSandboxEnv(
   return env;
 }
 
-/** Config in the shape the runtime expects. Pure, so the mapping is testable. */
+/**
+ * Config in the shape the runtime expects. Pure, so the mapping is testable.
+ *
+ * Every field here is REQUIRED by SandboxRuntimeConfigSchema, including the
+ * empty deny lists. `SandboxManager.initialize()` does NOT validate, so an
+ * incomplete config is accepted and then misbehaves silently: omitting
+ * `deniedDomains` left the proxy accepting CONNECT and hanging upstream
+ * forever, which looked exactly like "the sandbox blocks all egress". The
+ * package's own CLI rejects the same config outright — that discrepancy is
+ * what the validation in `ready()` now closes.
+ */
 export function toRuntimeConfig(policy: SandboxPolicy): {
-  network: { allowedDomains: string[] };
-  filesystem: { denyRead: string[]; allowWrite: string[] };
+  network: { allowedDomains: string[]; deniedDomains: string[] };
+  filesystem: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
 } {
   return {
-    // `network` is REQUIRED — omitting it throws inside the runtime while it
-    // reads network.parentProxy.
-    network: { allowedDomains: [...policy.allowedDomains] },
-    filesystem: { denyRead: [...policy.denyRead], allowWrite: [...policy.allowWrite] }
+    // Omitting `network` entirely throws inside the runtime on
+    // network.parentProxy; omitting its deny list breaks egress silently.
+    network: { allowedDomains: [...policy.allowedDomains], deniedDomains: [] },
+    filesystem: {
+      denyRead: [...policy.denyRead],
+      allowWrite: [...policy.allowWrite],
+      denyWrite: []
+    }
   };
 }
 
@@ -168,7 +208,9 @@ export class SandboxedCommandRunner implements CommandRunner {
           }
         );
       }
-      await manager.initialize(toRuntimeConfig(this.policy));
+      const runtimeConfig = toRuntimeConfig(this.policy);
+      assertRuntimeConfig(configSchema, runtimeConfig);
+      await manager.initialize(runtimeConfig);
       this.manager = manager;
       return manager;
     })();
