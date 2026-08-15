@@ -1,4 +1,13 @@
-import { CONFIG_DEFAULTS, MockModelClient, parseAgentEvent } from '@harness/core';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  CONFIG_DEFAULTS,
+  JsonlSessionStore,
+  MockModelClient,
+  parseAgentEvent
+} from '@harness/core';
 import { describe, expect, it } from 'vitest';
 
 import { type HeadlessOptions, runHeadless } from './run.ts';
@@ -10,6 +19,9 @@ function options(overrides: Partial<HeadlessOptions> = {}): HeadlessOptions {
     config: { ...CONFIG_DEFAULTS },
     workspaceRoot: '/work/repo',
     signal: new AbortController().signal,
+    // Default off so the suite never writes into the real ~/.harness;
+    // transcript behavior is covered explicitly below.
+    transcriptDir: null,
     ...overrides
   };
 }
@@ -116,6 +128,51 @@ describe('runHeadless', () => {
       writeErr: err.write
     });
     expect(err.text()).toBe('');
+  });
+
+  it('writes a replayable JSONL transcript for every run (R5)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'harness-headless-'));
+    try {
+      const code = await runHeadless(options({ transcriptDir: dir }), {
+        modelClient: new MockModelClient([{ text: 'persisted' }]),
+        writeOut: sink().write,
+        writeErr: sink().write
+      });
+      expect(code).toBe(0);
+
+      const files = (await readdir(dir)).filter((name) => name.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+
+      const sessionId = files[0]?.replace('.jsonl', '') ?? '';
+      const store = new JsonlSessionStore(dir);
+      const reopened = await store.open(sessionId);
+      await reopened.sink.close();
+      expect(reopened.entries.map((entry) => entry.type)).toEqual(['meta', 'user', 'assistant']);
+      const assistant = reopened.entries[2];
+      if (assistant?.type === 'assistant') {
+        expect(assistant.data.content).toEqual([{ type: 'text', text: 'persisted' }]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('continues without a transcript when the directory cannot be created', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'harness-headless-'));
+    const blocker = join(dir, 'not-a-dir');
+    await writeFile(blocker, 'x', 'utf8');
+    const err = sink();
+    try {
+      const code = await runHeadless(options({ transcriptDir: join(blocker, 'nested') }), {
+        modelClient: new MockModelClient([{ text: 'still works' }]),
+        writeOut: sink().write,
+        writeErr: err.write
+      });
+      expect(code).toBe(0);
+      expect(err.text()).toContain('no session transcript');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('retry warnings do not fail the run', async () => {

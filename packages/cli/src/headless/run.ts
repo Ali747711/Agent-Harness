@@ -4,7 +4,10 @@ import {
   builtinToolRegistry,
   type Config,
   createAnthropicModelClient,
-  type ModelClient
+  JsonlSessionStore,
+  type ModelClient,
+  type OpenedSession,
+  projectSessionsDir
 } from '@harness/core';
 
 /**
@@ -21,6 +24,11 @@ export interface HeadlessOptions {
   config: Config;
   workspaceRoot: string;
   signal: AbortSignal;
+  /**
+   * Where JSONL transcripts are written (R5). Defaults to
+   * ~/.harness/projects/<slug>-<hash>/; pass null to run without one.
+   */
+  transcriptDir?: string | null;
 }
 
 export interface HeadlessDeps {
@@ -56,54 +64,81 @@ export async function runHeadless(
     );
   }
 
-  const session = new AgentSession({
+  // R5: every session writes a JSONL transcript. A transcript failure must
+  // never cost the user their run — warn and continue without one.
+  const transcriptDir =
+    options.transcriptDir === undefined
+      ? projectSessionsDir(options.workspaceRoot)
+      : options.transcriptDir;
+  let opened: OpenedSession | null = null;
+  if (transcriptDir !== null) {
+    try {
+      opened = await new JsonlSessionStore(transcriptDir).create({
+        workspaceRoot: options.workspaceRoot,
+        model: options.config.model
+      });
+    } catch (error) {
+      writeErr(`warning: no session transcript (${String(error)}); continuing without one\n`);
+    }
+  }
+
+  const sessionOptions = {
     config: options.config,
     modelClient,
     workspaceRoot: options.workspaceRoot,
     tools: builtinToolRegistry()
-  });
+  };
+  const session =
+    opened === null
+      ? new AgentSession(sessionOptions)
+      : AgentSession.fromEntries(opened.entries, { ...sessionOptions, sink: opened.sink });
 
   const collected: AgentEvent[] = [];
   let failed = false;
   let wroteText = false;
 
-  for await (const event of session.run(options.prompt, options.signal)) {
-    if (event.type === 'error' && event.severity !== 'warning') {
-      failed = true;
-    }
-    switch (options.format) {
-      case 'jsonl':
-        writeOut(`${JSON.stringify(event)}\n`);
-        break;
-      case 'json':
-        collected.push(event);
-        break;
-      case 'text': {
-        if (event.type === 'assistant_text_delta') {
-          writeOut(event.text);
-          wroteText = true;
-        } else if (event.type === 'error') {
-          writeErr(`${wroteText ? '\n' : ''}error (${event.code}): ${event.message}\n`);
-          wroteText = false;
+  try {
+    for await (const event of session.run(options.prompt, options.signal)) {
+      if (event.type === 'error' && event.severity !== 'warning') {
+        failed = true;
+      }
+      switch (options.format) {
+        case 'jsonl':
+          writeOut(`${JSON.stringify(event)}\n`);
+          break;
+        case 'json':
+          collected.push(event);
+          break;
+        case 'text': {
+          if (event.type === 'assistant_text_delta') {
+            writeOut(event.text);
+            wroteText = true;
+          } else if (event.type === 'error') {
+            writeErr(`${wroteText ? '\n' : ''}error (${event.code}): ${event.message}\n`);
+            wroteText = false;
+          }
+          break;
         }
-        break;
-      }
-      default: {
-        const exhaustive: never = options.format;
-        throw new Error(`unreachable output format: ${String(exhaustive)}`);
+        default: {
+          const exhaustive: never = options.format;
+          throw new Error(`unreachable output format: ${String(exhaustive)}`);
+        }
       }
     }
-  }
 
-  if (options.format === 'json') {
-    writeOut(`${JSON.stringify(collected, null, 2)}\n`);
-  }
-  if (options.format === 'text' && wroteText) {
-    writeOut('\n');
-  }
+    if (options.format === 'json') {
+      writeOut(`${JSON.stringify(collected, null, 2)}\n`);
+    }
+    if (options.format === 'text' && wroteText) {
+      writeOut('\n');
+    }
 
-  if (options.signal.aborted) {
-    return 130;
+    if (options.signal.aborted) {
+      return 130;
+    }
+    return failed ? 1 : 0;
+  } finally {
+    // Close even on interrupt so the transcript is flushed and resumable.
+    await opened?.sink.close().catch(() => undefined);
   }
-  return failed ? 1 : 0;
 }

@@ -26,6 +26,8 @@ effectively none. The real confinement layer (OS-level sandboxing) is Phase 2.
 | No orphaned child processes on cancel or timeout (process-group SIGTERM → SIGKILL) | `DirectCommandRunner` | bash |
 | Secret-shaped environment variables (`*API_KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`, `*PRIVATE_KEY*`) are removed from the child environment | `scrubEnv` | bash |
 | Tool arguments are passed as argv arrays, never interpolated into a shell string | glob · grep call sites | glob · grep |
+| A `tool(prefix:*)` allow rule will not auto-approve a command containing shell control characters (`; && \|\| \| > < \` $() & {} \\` or a newline) — it falls through to `ask` | `safeToAutoApprove` in the permission engine | bash |
+| Every run writes an append-only JSONL transcript | `JsonlSessionStore` wired into the headless client | all sessions |
 
 ## What is **not** enforced (know this before using `bypass`)
 
@@ -74,7 +76,8 @@ behavior, not a bug.
   revertable. The harness has no checkpoint/undo of its own yet (Phase 2).
 - Prefer `default`; reach for `acceptEdits` when iterating; treat `bypass` as "I am in a
   disposable environment".
-- Grant narrow allow rules (`bash(git status:*)`) rather than broad ones (`bash`).
+- Grant narrow allow rules (`bash(git status:*)`) rather than broad ones (`bash`). A bare `bash`
+  rule is a blanket opt-in: unlike prefix rules, it auto-approves chained commands too.
 - Keep secrets out of the workspace. Env scrubbing covers the child process environment, not
   files on disk — a `.env` in the workspace is readable by any allowed tool.
 - Do not point the agent at a workspace containing content from untrusted sources while running
