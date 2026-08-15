@@ -193,6 +193,11 @@ export class AgentSession {
     return this.history;
   }
 
+  /** Change the permission mode mid-session (TUI shift+tab). */
+  setPermissionMode(mode: Config['permissionMode']): void {
+    this.permissions.setMode(mode);
+  }
+
   /** Session-wide token/cost totals from API usage fields only (R9). */
   usage() {
     return this.pipeline.totals();

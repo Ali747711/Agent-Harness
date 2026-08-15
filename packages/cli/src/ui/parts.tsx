@@ -265,44 +265,94 @@ export function SlashMenu({
   );
 }
 
-export function Banner({ vm }: { vm: ViewModel }): React.ReactElement {
+/**
+ * Startup block: a small mark plus aligned metadata, no border — the banner
+ * introduces the session, it should not look like a message.
+ */
+export function Banner({ vm, version }: { vm: ViewModel; version: string }): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.color.accent} paddingX={1}>
-      <Text bold color={theme.color.accent}>
-        harness
-      </Text>
-      <Text dimColor>{vm.workspaceRoot}</Text>
-      <Text dimColor>
-        {vm.model}
-        {vm.memoryFiles.length > 0 ? ` · memory: ${vm.memoryFiles.join(', ')}` : ''}
-      </Text>
-      <Text dimColor>/help for commands · ctrl-c to interrupt</Text>
+    <Box>
+      <Box flexDirection="column" marginRight={2}>
+        <Text color={theme.color.accent}>╭───╮</Text>
+        <Text color={theme.color.accent}>│ › │</Text>
+        <Text color={theme.color.accent}>╰───╯</Text>
+      </Box>
+      <Box flexDirection="column">
+        <Text>
+          <Text bold>harness </Text>
+          <Text dimColor>v{version}</Text>
+        </Text>
+        <Text dimColor>
+          {vm.model}
+          {vm.memoryFiles.length > 0 ? ` · memory: ${vm.memoryFiles.join(', ')}` : ''}
+        </Text>
+        <Text dimColor>{vm.workspaceRoot}</Text>
+      </Box>
     </Box>
   );
 }
 
-/** Multi-line aware input with a visible caret. */
-export function InputLine({
+const MODE_HINT = {
+  default: { label: 'ask before writes and commands', color: theme.color.muted },
+  acceptEdits: { label: 'auto-accept edits on', color: theme.color.ok },
+  bypass: { label: 'bypass mode — nothing is gated', color: theme.color.error }
+} as const;
+
+/** The line under the input: current mode + how to change it (shift+tab). */
+export function HintLine({ vm }: { vm: ViewModel }): React.ReactElement {
+  const hint = MODE_HINT[vm.permissionMode];
+  return (
+    <Box>
+      <Text color={hint.color}>
+        {'▸▸ '}
+        {hint.label}
+      </Text>
+      <Text dimColor> (shift+tab to cycle)</Text>
+    </Box>
+  );
+}
+
+/**
+ * Full-width bordered input. Shows ghost placeholder text when empty and a
+ * block caret at the cursor, including on a multi-line draft.
+ */
+export function InputBox({
   value,
   cursor,
-  disabled
+  disabled,
+  placeholder
 }: {
   value: string;
   cursor: number;
   disabled: boolean;
+  placeholder: string;
 }): React.ReactElement {
   const before = value.slice(0, cursor);
   const at = value.slice(cursor, cursor + 1);
   const after = value.slice(cursor + 1);
+  const empty = value === '';
+
   return (
-    <Box>
+    <Box
+      borderStyle="round"
+      borderColor={disabled ? theme.color.muted : theme.color.muted}
+      paddingX={1}
+      width="100%"
+    >
       <Text color={disabled ? theme.color.muted : theme.color.user}>{'› '}</Text>
-      <Text>
-        {before}
-        {disabled ? null : <Text inverse>{at === '' || at === '\n' ? ' ' : at}</Text>}
-        {at === '\n' ? '\n' : ''}
-        {after}
-      </Text>
+      {empty ? (
+        <Text>
+          {disabled ? null : <Text inverse> </Text>}
+          <Text dimColor>{placeholder}</Text>
+        </Text>
+      ) : (
+        <Text>
+          {before}
+          {disabled ? null : <Text inverse>{at === '' || at === '\n' ? ' ' : at}</Text>}
+          {at === '\n' ? '\n' : ''}
+          {after}
+        </Text>
+      )}
     </Box>
   );
 }

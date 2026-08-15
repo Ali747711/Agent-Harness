@@ -7,7 +7,8 @@ import { completions } from '../state/slash.ts';
 import type { ViewModel } from '../state/view-model.ts';
 import {
   Banner,
-  InputLine,
+  HintLine,
+  InputBox,
   PermissionDialog,
   SlashMenu,
   StatusBar,
@@ -22,7 +23,15 @@ import { theme } from './theme.ts';
  * the ticking clock is a single interval that runs ONLY while the agent is
  * working, so an idle session costs nothing.
  */
-export function App({ controller }: { controller: SessionController }): React.ReactElement {
+const PLACEHOLDER = 'Ask anything, or /help for commands';
+
+export function App({
+  controller,
+  version = '0.0.1'
+}: {
+  controller: SessionController;
+  version?: string;
+}): React.ReactElement {
   const [vm, setVm] = useState<ViewModel>(controller.state);
   const [input, setInput] = useState(initialInputState());
   const [tick, setTick] = useState(0);
@@ -78,6 +87,12 @@ export function App({ controller }: { controller: SessionController }): React.Re
       return;
     }
 
+    // shift+tab cycles the permission mode, so the hint line is real state.
+    if (key.tab && key.shift) {
+      controller.cyclePermissionMode();
+      return;
+    }
+
     // Tab completes the highlighted slash command.
     if (key.tab && menu.length > 0) {
       const chosen = menu[menuIndex % menu.length];
@@ -123,7 +138,7 @@ export function App({ controller }: { controller: SessionController }): React.Re
         {(item) => <TranscriptLine key={item.id} item={item} />}
       </Static>
 
-      {vm.transcript.length === 0 ? <Banner vm={vm} /> : null}
+      {vm.transcript.length === 0 ? <Banner vm={vm} version={version} /> : null}
 
       {vm.liveThinking !== '' ? (
         <Box marginTop={1} marginLeft={1}>
@@ -146,11 +161,13 @@ export function App({ controller }: { controller: SessionController }): React.Re
 
       <Box marginTop={1} flexDirection="column">
         {menu.length > 0 ? <SlashMenu commands={menu} selected={menuIndex % menu.length} /> : null}
-        <InputLine
+        <InputBox
           value={input.value}
           cursor={input.cursor}
           disabled={vm.pendingPermission !== null}
+          placeholder={PLACEHOLDER}
         />
+        <HintLine vm={vm} />
         <StatusBar vm={vm} spinnerFrame={busy ? spinnerFrame : undefined} now={now} />
       </Box>
     </Box>

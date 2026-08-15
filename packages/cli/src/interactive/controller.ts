@@ -1,4 +1,4 @@
-import type { AgentSession, PermissionChoice } from '@harness/core';
+import type { AgentSession, PermissionChoice, PermissionMode } from '@harness/core';
 
 import { isKnownCommand, parseSlash, SLASH_COMMANDS } from '../state/slash.ts';
 import {
@@ -6,6 +6,7 @@ import {
   reduce,
   type ViewModel,
   withNotice,
+  withPermissionMode,
   withQueued,
   withUserPrompt
 } from '../state/view-model.ts';
@@ -24,6 +25,9 @@ export interface ControllerOptions {
   session: AgentSession;
   model: string;
   workspaceRoot: string;
+  permissionMode?: PermissionMode;
+  /** Shown in the startup banner, before session_started has fired. */
+  memoryFiles?: readonly string[];
   /** Used by /clear to start a fresh conversation (and a fresh transcript). */
   newSession?: () => Promise<AgentSession> | AgentSession;
   /** Backs /sessions; injected so the controller stays free of storage concerns. */
@@ -41,7 +45,21 @@ export class SessionController {
 
   constructor(private readonly options: ControllerOptions) {
     this.session = options.session;
-    this.vm = initialViewModel(options.model, options.workspaceRoot);
+    this.vm = {
+      ...withPermissionMode(
+        initialViewModel(options.model, options.workspaceRoot),
+        options.permissionMode ?? 'default'
+      ),
+      memoryFiles: [...(options.memoryFiles ?? [])]
+    };
+  }
+
+  /** shift+tab: default → acceptEdits → bypass → default. */
+  cyclePermissionMode(): void {
+    const order: PermissionMode[] = ['default', 'acceptEdits', 'bypass'];
+    const next = order[(order.indexOf(this.vm.permissionMode) + 1) % order.length] ?? 'default';
+    this.session.setPermissionMode(next);
+    this.update(withPermissionMode(this.vm, next));
   }
 
   get state(): ViewModel {
@@ -139,7 +157,12 @@ export class SessionController {
         this.session = await this.options.newSession();
         // A fresh view AND a fresh conversation: the point of /clear is that
         // the next turn carries no prior context.
-        this.vm = initialViewModel(this.options.model, this.options.workspaceRoot);
+        const mode = this.vm.permissionMode;
+        this.vm = withPermissionMode(
+          initialViewModel(this.options.model, this.options.workspaceRoot),
+          mode
+        );
+        this.session.setPermissionMode(mode);
         this.update(withNotice(this.vm, 'cleared — new session started'));
         return;
       }

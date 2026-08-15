@@ -1,4 +1,4 @@
-import type { AgentEvent, PermissionEffect } from '@harness/core';
+import type { AgentEvent, PermissionEffect, PermissionMode } from '@harness/core';
 
 /**
  * Pure AgentEvent[] → ViewModel reducer (PHASE1-PLAN §4.6 / step 13). No Ink,
@@ -50,6 +50,8 @@ export interface ViewModel {
   pendingPermission: PendingPermission | null;
   /** Wall-clock start of the active turn, for the elapsed timer. */
   turnStartedAt: number | null;
+  /** Live permission mode; cycled from the TUI with shift+tab. */
+  permissionMode: PermissionMode;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -77,6 +79,7 @@ export function initialViewModel(model: string, workspaceRoot: string): ViewMode
     activeTools: [],
     pendingPermission: null,
     turnStartedAt: null,
+    permissionMode: 'default',
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -122,6 +125,10 @@ export function withUserPrompt(vm: ViewModel, text: string): ViewModel {
 
 export function withQueued(vm: ViewModel, queued: string[]): ViewModel {
   return { ...vm, queued };
+}
+
+export function withPermissionMode(vm: ViewModel, permissionMode: PermissionMode): ViewModel {
+  return { ...vm, permissionMode };
 }
 
 export function withNotice(vm: ViewModel, text: string): ViewModel {

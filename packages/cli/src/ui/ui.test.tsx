@@ -11,8 +11,11 @@ import { SessionController } from '../interactive/controller.ts';
 import { initialViewModel, type ViewModel } from '../state/view-model.ts';
 import { App } from './app.tsx';
 import {
+  Banner,
   compactTokens,
   Diff,
+  HintLine,
+  InputBox,
   Markdown,
   PermissionDialog,
   StatusBar,
@@ -209,7 +212,84 @@ describe('presentational parts', () => {
   });
 });
 
+describe('startup chrome', () => {
+  it('banner shows version, model, memory files, and workspace', () => {
+    const { lastFrame, unmount } = render(
+      createElement(Banner, {
+        vm: vmWith({ memoryFiles: ['CLAUDE.md', 'AGENTS.md'] }),
+        version: '1.2.3'
+      })
+    );
+    const frame = lastFrame() ?? '';
+    unmount();
+    expect(frame).toContain('harness');
+    expect(frame).toContain('v1.2.3');
+    expect(frame).toContain('claude-opus-5');
+    expect(frame).toContain('memory: CLAUDE.md, AGENTS.md');
+    expect(frame).toContain('/work/repo');
+  });
+
+  it('input box shows the placeholder only while empty', () => {
+    const empty = render(
+      createElement(InputBox, {
+        value: '',
+        cursor: 0,
+        disabled: false,
+        placeholder: 'Ask anything'
+      })
+    );
+    expect(empty.lastFrame()).toContain('Ask anything');
+    empty.unmount();
+
+    const typed = render(
+      createElement(InputBox, {
+        value: 'a real prompt',
+        cursor: 13,
+        disabled: false,
+        placeholder: 'Ask anything'
+      })
+    );
+    const frame = typed.lastFrame() ?? '';
+    typed.unmount();
+    expect(frame).toContain('a real prompt');
+    expect(frame).not.toContain('Ask anything');
+  });
+
+  it('hint line names the active permission mode', () => {
+    for (const [mode, expected] of [
+      ['default', 'ask before writes'],
+      ['acceptEdits', 'auto-accept edits on'],
+      ['bypass', 'nothing is gated']
+    ] as const) {
+      const { lastFrame, unmount } = render(
+        createElement(HintLine, { vm: vmWith({ permissionMode: mode }) })
+      );
+      const frame = lastFrame() ?? '';
+      unmount();
+      expect(frame).toContain(expected);
+      expect(frame).toContain('shift+tab');
+    }
+  });
+});
+
 describe('App', () => {
+  it('shift+tab cycles the permission mode and the hint follows', async () => {
+    const controller = controllerWith([{ text: 'ok' }]);
+    const { lastFrame, stdin, unmount } = render(createElement(App, { controller }));
+    await settle(50);
+    expect(lastFrame()).toContain('ask before writes');
+
+    stdin.write('[Z'); // shift+tab
+    await settle(50);
+    expect(lastFrame()).toContain('auto-accept edits on');
+    expect(controller.state.permissionMode).toBe('acceptEdits');
+
+    stdin.write('[Z');
+    await settle(50);
+    expect(controller.state.permissionMode).toBe('bypass');
+    unmount();
+  });
+
   it('renders a completed exchange with the status bar', async () => {
     const controller = controllerWith([{ text: 'hello from the TUI' }]);
     const { lastFrame, unmount } = render(createElement(App, { controller }));

@@ -82,6 +82,8 @@ export async function runInteractive(
     }),
     model: options.config.model,
     workspaceRoot: options.workspaceRoot,
+    permissionMode: options.config.permissionMode,
+    memoryFiles: memory.map((file) => file.label),
     newSession: async () => {
       await active.sink.close().catch(() => undefined);
       active = await store.create({
