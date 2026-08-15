@@ -12,7 +12,7 @@ export * from './config/index.ts';
 export { HarnessError, type HarnessErrorCode, isHarnessError } from './errors/index.ts';
 export * from './model/index.ts';
 export { estimateCostUsd } from './model/pricing.ts';
-export { type ResolvedPath, resolveWorkspacePath } from './permissions/guard.ts';
+export * from './permissions/index.ts';
 export * from './protocol/index.ts';
 export * from './session/index.ts';
 export * from './tools/index.ts';

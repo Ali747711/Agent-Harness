@@ -1,3 +1,5 @@
+import { sep } from 'node:path';
+
 import type { Config } from '../config/schema.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
 import type { ModelClient } from '../model/client.ts';
@@ -11,9 +13,16 @@ import type {
   ToolSpec,
   ToolUseBlock
 } from '../model/types.ts';
+import { PermissionEngine, suggestRules } from '../permissions/engine.ts';
 import { resolveWorkspacePath } from '../permissions/guard.ts';
 import type { AgentEvent } from '../protocol/events.ts';
-import { PROTOCOL_VERSION, type StopReason, type Usage } from '../protocol/types.ts';
+import {
+  type PermissionChoice,
+  type PermissionRequest,
+  PROTOCOL_VERSION,
+  type StopReason,
+  type Usage
+} from '../protocol/types.ts';
 import {
   makeEntry,
   resolvePath,
@@ -40,6 +49,14 @@ export interface AgentSessionOptions {
   sink?: SessionSink;
   /** Tool set. Absent = conversation-only agent. */
   tools?: ToolRegistry;
+  /**
+   * Interactive approver for 'ask' decisions (the TUI wires the permission
+   * dialog here; step 13). Absent = auto-deny with guidance (headless).
+   */
+  onPermissionRequest?: (
+    request: PermissionRequest,
+    suggestions: string[]
+  ) => Promise<PermissionChoice>;
   retry?: {
     /** Max retries per model request after recoverable failures. Default 3. */
     attempts?: number;
@@ -88,6 +105,12 @@ interface TurnOutcome {
   usage: Usage;
 }
 
+type GateOutcome =
+  | { verdict: 'allow' }
+  | { verdict: 'deny'; message: string; hint?: string }
+  | { verdict: 'aborted' }
+  | { verdict: 'fatal'; error: HarnessError };
+
 export class AgentSession {
   readonly sessionId: string;
   private readonly options: AgentSessionOptions;
@@ -98,6 +121,8 @@ export class AgentSession {
   private started = false;
   private lastEntryId: string | null = null;
 
+  private readonly permissions: PermissionEngine;
+
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
@@ -105,6 +130,13 @@ export class AgentSession {
     // Computed once: the tool list is part of the cached prefix (ADR-0008)
     // and must be byte-identical on every request of the session.
     this.wireTools = options.tools?.toWireSpecs() ?? [];
+    // Rules were schema-validated at config load; this re-parse cannot fail
+    // for config-sourced rules and fails fast for programmatic ones.
+    this.permissions = new PermissionEngine({
+      mode: options.config.permissionMode,
+      allow: options.config.permissions.allow,
+      deny: options.config.permissions.deny
+    });
   }
 
   /**
@@ -374,35 +406,77 @@ export class AgentSession {
             input: call.input
           };
 
-          if (!registered.readOnly) {
-            // ADR-0006 fail-closed: effects stay locked until the engine exists.
-            result = {
-              ok: false,
-              error: {
-                message: `${call.name} requires permissions; the permission engine lands in step 8`,
-                hint: 'only read-only tools are available right now'
-              }
-            };
+          // plan → guard-resolve effects → engine → (maybe) ask → execute.
+          let request: PermissionRequest | null = null;
+          let gateError: ToolResult | null = null;
+          try {
+            request = await this.resolveEffects(
+              registered.plan(parsed.data, { workspaceRoot: this.options.workspaceRoot })
+            );
+          } catch (error) {
+            if (isHarnessError(error) && error.code === 'permission_denied') {
+              // WorkspaceGuard denial — precedence 0, non-overridable.
+              gateError = {
+                ok: false,
+                error: { message: error.message, hint: 'stay inside the workspace root' }
+              };
+            } else if (isHarnessError(error) && error.code === 'aborted') {
+              aborted = true;
+              gateError = {
+                ok: false,
+                error: { message: 'Interrupted by user during execution.' }
+              };
+            } else {
+              gateError = {
+                ok: false,
+                error: { message: `tool planning failed: ${String(error)}` }
+              };
+            }
+          }
+
+          if (gateError !== null || request === null) {
+            result = gateError ?? { ok: false, error: { message: 'tool planning failed' } };
           } else {
-            try {
-              result = await registered.execute(parsed.data, {
-                workspaceRoot: this.options.workspaceRoot,
-                signal,
-                resolvePath: (candidate) =>
-                  resolveWorkspacePath(this.options.workspaceRoot, candidate)
-              });
-            } catch (error) {
-              if (isHarnessError(error) && error.code === 'aborted') {
-                aborted = true;
-                result = {
-                  ok: false,
-                  error: { message: 'Interrupted by user during execution.' }
-                };
-              } else {
-                result = {
-                  ok: false,
-                  error: { message: `tool crashed: ${String(error)}` }
-                };
+            const gate = yield* this.gate(call.id, request, signal);
+            if (gate.verdict === 'fatal') {
+              yield this.fatal(gate.error);
+              return 'fatal';
+            }
+            if (gate.verdict === 'aborted') {
+              aborted = true;
+              result = {
+                ok: false,
+                error: { message: 'Interrupted by user while awaiting permission.' }
+              };
+            } else if (gate.verdict === 'deny') {
+              result = {
+                ok: false,
+                error: {
+                  message: gate.message,
+                  ...(gate.hint !== undefined && { hint: gate.hint })
+                }
+              };
+            } else {
+              try {
+                result = await registered.execute(parsed.data, {
+                  workspaceRoot: this.options.workspaceRoot,
+                  signal,
+                  resolvePath: (candidate) =>
+                    resolveWorkspacePath(this.options.workspaceRoot, candidate)
+                });
+              } catch (error) {
+                if (isHarnessError(error) && error.code === 'aborted') {
+                  aborted = true;
+                  result = {
+                    ok: false,
+                    error: { message: 'Interrupted by user during execution.' }
+                  };
+                } else {
+                  result = {
+                    ok: false,
+                    error: { message: `tool crashed: ${String(error)}` }
+                  };
+                }
               }
             }
           }
@@ -437,6 +511,117 @@ export class AgentSession {
       return 'fatal';
     }
     return aborted ? 'aborted' : 'continue';
+  }
+
+  /**
+   * Canonicalize every path effect through the WorkspaceGuard BEFORE the
+   * engine sees the request — escapes are denied here (non-overridable) and
+   * rules match against resolved, '/'-separated relative paths only.
+   */
+  private async resolveEffects(request: PermissionRequest): Promise<PermissionRequest> {
+    const effects = await Promise.all(
+      request.effects.map(async (effect) => {
+        if (effect.path === undefined) {
+          return effect;
+        }
+        const resolved = await resolveWorkspacePath(this.options.workspaceRoot, effect.path);
+        return { ...effect, path: resolved.relative.split(sep).join('/') };
+      })
+    );
+    return { ...request, effects };
+  }
+
+  /**
+   * Engine decision + interactive ask round-trip. Emits permission events,
+   * persists the decision, and records session grants.
+   */
+  private async *gate(
+    callId: string,
+    request: PermissionRequest,
+    signal: AbortSignal
+  ): AsyncGenerator<AgentEvent, GateOutcome, undefined> {
+    const decision = this.permissions.evaluate(request);
+    if (decision.kind === 'allow') {
+      return { verdict: 'allow' };
+    }
+    if (decision.kind === 'deny') {
+      return {
+        verdict: 'deny',
+        message: `permission denied: ${decision.reason}`,
+        hint: 'an operator can adjust permissions.allow/deny in .harness/config.json'
+      };
+    }
+
+    const requestId = crypto.randomUUID();
+    const suggestions = suggestRules(request);
+    const interactive = this.options.onPermissionRequest !== undefined;
+    yield { type: 'permission_requested', requestId, callId, request, suggestions };
+
+    let choice: PermissionChoice;
+    try {
+      choice = await this.awaitPermission(request, suggestions, signal);
+    } catch (error) {
+      if (isHarnessError(error) && error.code === 'aborted') {
+        return { verdict: 'aborted' };
+      }
+      choice = 'deny'; // a broken approver must never become an approval
+    }
+
+    const by = interactive ? ('user' as const) : ('rule' as const);
+    yield { type: 'permission_resolved', requestId, choice, by };
+    const persistError = await this.tryAppend({
+      type: 'permission',
+      data: { requestId, tool: request.tool, choice, by }
+    });
+    if (persistError !== null) {
+      return { verdict: 'fatal', error: persistError };
+    }
+
+    if (choice === 'deny') {
+      return {
+        verdict: 'deny',
+        message: interactive
+          ? 'permission denied by user'
+          : 'permission denied: no interactive approver in this mode',
+        hint: interactive
+          ? 'propose a different approach or explain why this action is needed'
+          : `re-run with --permission-mode acceptEdits, or add an allow rule (e.g. ${suggestions[0] ?? `${request.tool}(...)`})`
+      };
+    }
+    if (choice === 'allow_session') {
+      this.permissions.recordGrant(request);
+    }
+    return { verdict: 'allow' };
+  }
+
+  /** Race the approver against the abort signal — interrupt stays instant. */
+  private awaitPermission(
+    request: PermissionRequest,
+    suggestions: string[],
+    signal: AbortSignal
+  ): Promise<PermissionChoice> {
+    const responder =
+      this.options.onPermissionRequest ?? (() => Promise.resolve<PermissionChoice>('deny'));
+    return new Promise<PermissionChoice>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new HarnessError('aborted', 'interrupted while awaiting permission'));
+        return;
+      }
+      const onAbort = (): void => {
+        reject(new HarnessError('aborted', 'interrupted while awaiting permission'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      responder(request, suggestions).then(
+        (choice) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(choice);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      );
+    });
   }
 
   /** Append a transcript entry; failures are returned, never swallowed. */

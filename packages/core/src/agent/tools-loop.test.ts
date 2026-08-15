@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { CONFIG_DEFAULTS } from '../config/index.ts';
+import { CONFIG_DEFAULTS, type Config } from '../config/index.ts';
 import { HarnessError } from '../errors/index.ts';
 import { MockModelClient, type ScriptedTurn } from '../model/mock/client.ts';
 import type { AgentEvent } from '../protocol/events.ts';
+import type { PermissionChoice, PermissionRequest } from '../protocol/types.ts';
 import { JsonlSessionStore } from '../session/store.ts';
 import { builtinToolRegistry, defineTool, ToolRegistry } from '../tools/index.ts';
 import { AgentSession } from './session.ts';
@@ -24,17 +25,43 @@ afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-function session(turns: ScriptedTurn[], tools = builtinToolRegistry()) {
+interface SessionOpts {
+  tools?: ToolRegistry;
+  config?: Partial<Config>;
+  responder?: (request: PermissionRequest, suggestions: string[]) => Promise<PermissionChoice>;
+}
+
+function session(turns: ScriptedTurn[], opts: SessionOpts = {}) {
   const client = new MockModelClient(turns);
   const agent = new AgentSession({
-    config: { ...CONFIG_DEFAULTS },
+    config: { ...CONFIG_DEFAULTS, ...opts.config },
     modelClient: client,
     workspaceRoot: workspace,
     sessionId: 'sess-tools',
-    tools,
+    tools: opts.tools ?? builtinToolRegistry(),
+    ...(opts.responder !== undefined && { onPermissionRequest: opts.responder }),
     retry: { attempts: 1, baseDelayMs: 1 }
   });
   return { agent, client };
+}
+
+/** A tool with a write effect — the permission-gating workhorse. */
+function writeStub(): ToolRegistry {
+  return new ToolRegistry().register(
+    defineTool<{ path: string }>({
+      name: 'write_stub',
+      description: 'stub writer',
+      schema: z.strictObject({ path: z.string() }),
+      readOnly: false,
+      renderTitle: (input) => `Write ${input.path}`,
+      plan: (input) => ({
+        tool: 'write_stub',
+        title: `Write ${input.path}`,
+        effects: [{ kind: 'write', path: input.path }]
+      }),
+      execute: () => Promise.resolve({ ok: true, content: 'stub wrote it', summary: 'wrote' })
+    })
+  );
 }
 
 async function collect(
@@ -116,35 +143,130 @@ describe('tool execution in the loop (step 7)', () => {
     }
   });
 
-  it('fails closed on non-readOnly tools until the permission engine exists', async () => {
-    const registry = new ToolRegistry().register(
-      defineTool<{ path: string }>({
-        name: 'write_stub',
-        description: 'stub writer',
-        schema: z.strictObject({ path: z.string() }),
-        readOnly: false,
-        renderTitle: (input) => `Write ${input.path}`,
-        plan: (input) => ({
-          tool: 'write_stub',
-          title: `Write ${input.path}`,
-          effects: [{ kind: 'write', path: input.path }]
-        }),
-        execute: () => Promise.resolve({ ok: true, content: 'should never run', summary: 'never' })
-      })
-    );
+  it('asks for write effects in default mode and auto-denies without an approver', async () => {
     const { agent, client } = session(
-      [{ toolCalls: [{ name: 'write_stub', input: { path: 'x' } }] }, { text: 'understood' }],
-      registry
+      [{ toolCalls: [{ name: 'write_stub', input: { path: 'x.txt' } }] }, { text: 'understood' }],
+      { tools: writeStub() }
     );
     const events = await collect(agent, 'write something');
 
+    expect(events.find((event) => event.type === 'permission_requested')).toMatchObject({
+      request: { tool: 'write_stub', effects: [{ kind: 'write', path: 'x.txt' }] },
+      suggestions: ['write_stub(x.txt)']
+    });
+    expect(events.find((event) => event.type === 'permission_resolved')).toMatchObject({
+      choice: 'deny',
+      by: 'rule'
+    });
     expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
       ok: false
     });
     const followUp = client.requests[1]?.messages.at(-1);
     const block = followUp?.role === 'user' ? followUp.content[0] : undefined;
     if (block?.type === 'tool_result') {
-      expect(block.content).toContain('requires permissions');
+      expect(block.content).toContain('no interactive approver');
+      expect(block.content).toContain('acceptEdits');
+    } else {
+      expect.unreachable('expected a tool_result block');
+    }
+  });
+
+  it('executes after an interactive allow_once', async () => {
+    const asked: PermissionRequest[] = [];
+    const { agent } = session(
+      [{ toolCalls: [{ name: 'write_stub', input: { path: 'x.txt' } }] }, { text: 'done' }],
+      {
+        tools: writeStub(),
+        responder: (request) => {
+          asked.push(request);
+          return Promise.resolve('allow_once');
+        }
+      }
+    );
+    const events = await collect(agent, 'write it');
+
+    expect(asked).toHaveLength(1);
+    expect(events.find((event) => event.type === 'permission_resolved')).toMatchObject({
+      choice: 'allow_once',
+      by: 'user'
+    });
+    expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
+      ok: true,
+      summary: 'wrote'
+    });
+  });
+
+  it('allow_session grants skip the ask on identical repeats', async () => {
+    let responderCalls = 0;
+    const { agent } = session(
+      [
+        { toolCalls: [{ name: 'write_stub', input: { path: 'same.txt' } }] },
+        { toolCalls: [{ name: 'write_stub', input: { path: 'same.txt' } }] },
+        { text: 'done twice' }
+      ],
+      {
+        tools: writeStub(),
+        responder: () => {
+          responderCalls += 1;
+          return Promise.resolve('allow_session');
+        }
+      }
+    );
+    const events = await collect(agent, 'write twice');
+
+    expect(responderCalls).toBe(1);
+    expect(events.filter((event) => event.type === 'permission_requested')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'tool_call_completed' && event.ok)).toHaveLength(
+      2
+    );
+  });
+
+  it('acceptEdits mode allows write effects without asking', async () => {
+    const { agent } = session(
+      [{ toolCalls: [{ name: 'write_stub', input: { path: 'x.txt' } }] }, { text: 'done' }],
+      { tools: writeStub(), config: { permissionMode: 'acceptEdits' } }
+    );
+    const events = await collect(agent, 'write it');
+
+    expect(events.some((event) => event.type === 'permission_requested')).toBe(false);
+    expect(events.find((event) => event.type === 'tool_call_completed')).toMatchObject({
+      ok: true
+    });
+  });
+
+  it('deny rules refuse without asking and name the rule', async () => {
+    const { agent, client } = session(
+      [{ toolCalls: [{ name: 'write_stub', input: { path: 'x.txt' } }] }, { text: 'ok' }],
+      {
+        tools: writeStub(),
+        config: { permissionMode: 'bypass', permissions: { allow: [], deny: ['write_stub'] } }
+      }
+    );
+    const events = await collect(agent, 'write it');
+
+    expect(events.some((event) => event.type === 'permission_requested')).toBe(false);
+    const followUp = client.requests[1]?.messages.at(-1);
+    const block = followUp?.role === 'user' ? followUp.content[0] : undefined;
+    if (block?.type === 'tool_result') {
+      expect(block.content).toContain('denied by rule write_stub');
+    } else {
+      expect.unreachable('expected a tool_result block');
+    }
+  });
+
+  it('the workspace guard denies escapes even in bypass mode', async () => {
+    const { agent, client } = session(
+      [{ toolCalls: [{ name: 'read', input: { path: '../outside.txt' } }] }, { text: 'ok' }],
+      { config: { permissionMode: 'bypass' } }
+    );
+    await collect(agent, 'read outside');
+    const followUp = client.requests[1]?.messages.at(-1);
+    const block = followUp?.role === 'user' ? followUp.content[0] : undefined;
+    if (block?.type === 'tool_result') {
+      expect(block.isError).toBe(true);
+      expect(block.content).toContain('outside the workspace');
+    } else {
+      expect.unreachable('expected a tool_result block');
     }
   });
 
@@ -188,7 +310,7 @@ describe('tool execution in the loop (step 7)', () => {
           ]
         }
       ],
-      registry
+      { tools: registry }
     );
 
     const events = await collect(agent, 'go', controller.signal);

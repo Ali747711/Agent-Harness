@@ -26,6 +26,7 @@ describe('loadConfig', () => {
       maxTokens: 32_000,
       maxTurns: 40,
       permissionMode: 'default',
+      permissions: { allow: [], deny: [] },
       memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md']
     });
     expect(Object.values(sources).every((source) => source === 'default')).toBe(true);
@@ -121,5 +122,30 @@ describe('loadConfig', () => {
   it('rejects invalid enum values wherever they come from', async () => {
     const attempt = loadConfig({ ...base, flags: { effort: 'ultra' } });
     await expect(attempt).rejects.toMatchObject({ code: 'config_invalid' });
+  });
+
+  it('accepts valid permission rules and rejects malformed ones at load time', async () => {
+    const { config } = await loadConfig({
+      ...base,
+      readTextFile: files({
+        '/work/repo/.harness/config.json': JSON.stringify({
+          permissions: { allow: ['bash(git status:*)', 'write(src/**)'], deny: ['bash(rm:*)'] }
+        })
+      })
+    });
+    expect(config.permissions.allow).toHaveLength(2);
+
+    const attempt = loadConfig({
+      ...base,
+      readTextFile: files({
+        '/work/repo/.harness/config.json': JSON.stringify({
+          permissions: { allow: ['BASH('], deny: [] }
+        })
+      })
+    });
+    await expect(attempt).rejects.toMatchObject({
+      code: 'config_invalid',
+      message: expect.stringContaining('project config')
+    });
   });
 });

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { parseRule } from '../permissions/rules.ts';
+
 /**
  * Model configuration is exactly (model, effort, thinking) + maxTokens
  * (ADR-0010). Sampling parameters (temperature/top_p/top_k) are deliberately
@@ -22,6 +24,21 @@ export type ThinkingMode = z.infer<typeof ThinkingModeSchema>;
 export const PermissionModeSchema = z.enum(['default', 'acceptEdits', 'bypass']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
+/** Rule strings are validated at parse time so bad rules fail at config load
+ *  with origin attribution — never silently at decision time (ADR-0006). */
+const RuleListSchema = z.array(
+  z.string().superRefine((value, ctx) => {
+    try {
+      parseRule(value);
+    } catch (error) {
+      ctx.addIssue({
+        code: 'custom',
+        message: error instanceof Error ? error.message : `invalid permission rule: ${value}`
+      });
+    }
+  })
+);
+
 const configFields = {
   model: z.string().min(1),
   effort: EffortSchema,
@@ -29,6 +46,11 @@ const configFields = {
   maxTokens: z.number().int().positive().max(128_000),
   maxTurns: z.number().int().positive().max(1_000),
   permissionMode: PermissionModeSchema,
+  /** Allow/deny rule lists (ADR-0006). Layers replace this key wholesale. */
+  permissions: z.strictObject({
+    allow: RuleListSchema,
+    deny: RuleListSchema
+  }),
   /** Ordered project-memory load list (ADR-0009). Later layers replace wholesale. */
   memoryFiles: z.array(z.string().min(1))
 } as const;
@@ -48,6 +70,7 @@ export const CONFIG_DEFAULTS: Config = {
   maxTokens: 32_000,
   maxTurns: 40,
   permissionMode: 'default',
+  permissions: { allow: [], deny: [] },
   memoryFiles: ['HARNESS.md', 'AGENTS.md', 'CLAUDE.md']
 };
 
