@@ -45,6 +45,17 @@ export async function runHeadless(
     });
   const modelClient = deps.modelClient ?? createAnthropicModelClient();
 
+  // ADR-0006: bypass is an explicit, loud opt-out — the bash tool is not
+  // workspace-confined, so this mode has no effective filesystem boundary
+  // beyond OS file permissions (see SAFETY.md).
+  if (options.config.permissionMode === 'bypass') {
+    writeErr(
+      'WARNING: --permission-mode bypass — writes and shell commands run without approval.\n' +
+        '         bash is NOT confined to the workspace; it can reach any file your user can.\n' +
+        '         Explicit deny rules still apply. See SAFETY.md.\n'
+    );
+  }
+
   const session = new AgentSession({
     config: options.config,
     modelClient,

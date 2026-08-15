@@ -95,7 +95,14 @@ Testing approach: no test outside the Anthropic adapter touches the network. The
 
 ## Safety (current state, honestly)
 
-Today the agent has **no tools** — it cannot touch your filesystem or shell, so there is nothing to sandbox yet. M2 introduces tools strictly behind a code-enforced permission engine (read-only auto-approved; writes and shell ask; paths outside the workspace hard-denied and non-overridable), with OS-level sandboxing following in Phase 2. The full threat model ships as `SAFETY.md` in step 17.
+The agent has six tools (read, glob, grep, write, edit, bash) behind a code-enforced permission engine: reads auto-approve, writes and shell commands require a decision, explicit deny rules beat every mode including `bypass`, and evaluation errors fail closed.
+
+Two limits are worth knowing before you point it at anything you care about:
+
+- **The file tools are confined to the workspace root** — `..`, absolute paths, and symlink escapes are rejected by a guard no rule can override.
+- **The bash tool is not.** A shell command runs with your user's full privileges and can reach anywhere on the machine; it is gated by *asking you*, not by a boundary. In `bypass` mode that gate is off. OS-level sandboxing lands in Phase 2 behind the `CommandRunner` seam.
+
+Read [SAFETY.md](SAFETY.md) for the full threat model, what each permission mode actually permits, and the recommended posture (short version: run in a clean git repo, prefer `default`, treat `bypass` as "disposable environment").
 
 ## License
 

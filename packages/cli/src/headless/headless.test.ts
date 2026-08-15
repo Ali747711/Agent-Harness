@@ -94,6 +94,30 @@ describe('runHeadless', () => {
     expect(code).toBe(130);
   });
 
+  it('warns loudly on stdout-free stderr when bypass mode is active (ADR-0006)', async () => {
+    const out = sink();
+    const err = sink();
+    await runHeadless(options({ config: { ...CONFIG_DEFAULTS, permissionMode: 'bypass' } }), {
+      modelClient: new MockModelClient([{ text: 'ok' }]),
+      writeOut: out.write,
+      writeErr: err.write
+    });
+    expect(err.text()).toContain('bypass');
+    expect(err.text()).toContain('NOT confined to the workspace');
+    // The warning must never pollute machine-readable stdout.
+    expect(out.text()).not.toContain('WARNING');
+  });
+
+  it('does not warn in default mode', async () => {
+    const err = sink();
+    await runHeadless(options(), {
+      modelClient: new MockModelClient([{ text: 'ok' }]),
+      writeOut: sink().write,
+      writeErr: err.write
+    });
+    expect(err.text()).toBe('');
+  });
+
   it('retry warnings do not fail the run', async () => {
     const out = sink();
     const code = await runHeadless(options({ format: 'jsonl' }), {
