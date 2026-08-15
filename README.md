@@ -21,7 +21,7 @@ It deliberately does **not** wrap the Claude Agent SDK — owning the loop is th
 |---|---|---|
 | **M1** — headless one-shot answer | `harness -p "…" --output-format jsonl` streams a real answer as protocol events | ✅ 2026-08-15 |
 | **M2** — tool loop under permissions | Agent greps/reads/edits/runs tests in a real repo; writes gated by the permission engine | 🔨 in progress (steps 5 ✅, 6–11) |
-| **M3** — interactive TUI + resume | Ink TUI, project memory, `--continue` with a prompt-cache hit on turn 2 | planned (steps 12–14) |
+| **M3** — interactive TUI + resume | Ink TUI, project memory, `--continue` with a prompt-cache hit on turn 2 | 🔨 code complete (steps 12–14), pending live verification |
 | **M4** — shippable v0.1 | Single binary, golden-transcript suite, hardened errors | planned (steps 15–17) |
 
 Full plan: [docs/PHASE1-PLAN.md](docs/PHASE1-PLAN.md) · strategy: [docs/PLAN.md](docs/PLAN.md) · research: [docs/RESEARCH.md](docs/RESEARCH.md) · decisions: [docs/adr/](docs/adr/)
@@ -33,7 +33,25 @@ Requirements: [Bun](https://bun.sh) ≥ 1.3, an Anthropic API key.
 ```bash
 bun install
 export ANTHROPIC_API_KEY=sk-ant-...
+bun packages/cli/src/main.ts
+```
+
+That opens the interactive TUI in the current directory. Type a prompt and press Enter; `Ctrl-C` interrupts a running turn (again to quit); permission prompts answer with `y` (once), `a` (this session), `n` (deny). Anything typed while the agent is working is queued and runs next.
+
+One-shot headless mode, for scripting and evals:
+
+```bash
 bun packages/cli/src/main.ts -p "explain what an agent loop is" --output-format text
+```
+
+Sessions persist as JSONL transcripts and can be resumed:
+
+```bash
+bun packages/cli/src/main.ts sessions list
+```
+
+```bash
+bun packages/cli/src/main.ts --continue
 ```
 
 Machine-readable event stream (one JSON event per line — the eval/scripting surface):

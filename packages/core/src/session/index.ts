@@ -12,7 +12,19 @@ export {
   toModelMessages,
   UserBlockSchema
 } from './entries.ts';
-export { projectSessionsDir, projectSlug, sessionFilePath } from './paths.ts';
+export {
+  SessionIndex,
+  type SessionSummary,
+  sessionIdFromPath,
+  summarize
+} from './index-store.ts';
+export {
+  harnessHomeDir,
+  indexDbPath,
+  projectSessionsDir,
+  projectSlug,
+  sessionFilePath
+} from './paths.ts';
 export {
   type CreateSessionMeta,
   JsonlSessionStore,

@@ -17,9 +17,18 @@ export function projectSlug(workspaceRoot: string): string {
   return `${name.length > 0 ? name : 'project'}-${hash}`;
 }
 
+export function harnessHomeDir(): string {
+  return join(homedir(), '.harness');
+}
+
 export function projectSessionsDir(workspaceRoot: string, baseDir?: string): string {
-  const base = baseDir ?? join(homedir(), '.harness');
+  const base = baseDir ?? harnessHomeDir();
   return join(base, 'projects', projectSlug(workspaceRoot));
+}
+
+/** The derived index (ADR-0004) — always rebuildable from the JSONL files. */
+export function indexDbPath(baseDir?: string): string {
+  return join(baseDir ?? harnessHomeDir(), 'index.db');
 }
 
 export function sessionFilePath(sessionsDir: string, sessionId: string): string {
