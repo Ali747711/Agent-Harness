@@ -18,6 +18,7 @@ import { createElement } from 'react';
 import { App } from '../ui/app.tsx';
 import { SessionController } from './controller.ts';
 import { readGitBranch } from './git.ts';
+import { clearScreen } from './screen.ts';
 
 export interface InteractiveOptions {
   config: Config;
@@ -114,6 +115,11 @@ export async function runInteractive(
       }
     }
   });
+
+  // Only now — after config, transcript, and memory have all loaded without
+  // error. Clearing first would wipe the screen and then print a failure onto
+  // it, destroying the context the user needs to read that failure.
+  clearScreen(process.stdout);
 
   const instance = render(
     createElement(App, {
