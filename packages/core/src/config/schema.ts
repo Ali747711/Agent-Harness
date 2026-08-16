@@ -39,6 +39,27 @@ const RuleListSchema = z.array(
   })
 );
 
+/**
+ * Object-valued keys are declared field-by-field so a LAYER can set part of
+ * one. Requiring the whole object per layer means `{"sandbox":{"enabled":true}}`
+ * is rejected for missing `allowWrite`/`denyRead` — technically consistent,
+ * practically useless, since nobody wants to restate defaults to change a flag.
+ */
+const permissionsFields = {
+  allow: RuleListSchema,
+  deny: RuleListSchema
+} as const;
+
+const sandboxFields = {
+  enabled: z.boolean(),
+  /** Extra writable roots. The workspace root is always added. */
+  allowWrite: z.array(z.string().min(1)),
+  /** Extra denied reads, on top of the credential defaults. */
+  denyRead: z.array(z.string().min(1)),
+  /** Egress allowlist. Empty denies all network from inside bash. */
+  allowedDomains: z.array(z.string().min(1))
+} as const;
+
 const configFields = {
   model: z.string().min(1),
   effort: EffortSchema,
@@ -46,11 +67,8 @@ const configFields = {
   maxTokens: z.number().int().positive().max(128_000),
   maxTurns: z.number().int().positive().max(1_000),
   permissionMode: PermissionModeSchema,
-  /** Allow/deny rule lists (ADR-0006). Layers replace this key wholesale. */
-  permissions: z.strictObject({
-    allow: RuleListSchema,
-    deny: RuleListSchema
-  }),
+  /** Allow/deny rule lists (ADR-0006). Merged per field across layers. */
+  permissions: z.strictObject(permissionsFields),
   /** Ordered project-memory load list (ADR-0009). Later layers replace wholesale. */
   memoryFiles: z.array(z.string().min(1)),
   /**
@@ -60,23 +78,30 @@ const configFields = {
    * allowedDomains. Run `harness doctor` to check this machine before
    * turning it on.
    */
-  sandbox: z.strictObject({
-    enabled: z.boolean(),
-    /** Extra writable roots. The workspace root is always added. */
-    allowWrite: z.array(z.string().min(1)),
-    /** Extra denied reads, on top of the credential defaults. */
-    denyRead: z.array(z.string().min(1)),
-    /** Egress allowlist. Empty denies all network from inside bash. */
-    allowedDomains: z.array(z.string().min(1))
-  })
+  sandbox: z.strictObject(sandboxFields)
 } as const;
+
+/** Keys whose value is an object merged field-by-field, not replaced. */
+export const NESTED_CONFIG_KEYS = ['permissions', 'sandbox'] as const;
+export type NestedConfigKey = (typeof NESTED_CONFIG_KEYS)[number];
+
+export function isNestedConfigKey(key: string): key is NestedConfigKey {
+  return (NESTED_CONFIG_KEYS as readonly string[]).includes(key);
+}
 
 /** A complete, valid configuration. */
 export const ConfigSchema = z.strictObject(configFields);
 export type Config = z.infer<typeof ConfigSchema>;
 
-/** Strict partial — one layer of the merge (file / env / flags). No defaults. */
-export const PartialConfigSchema = ConfigSchema.partial();
+/**
+ * Strict partial — one layer of the merge (file / env / flags). No defaults.
+ * Object-valued keys are partial too: a layer may set `sandbox.enabled` alone
+ * and inherit the rest, which is the only ergonomic way to flip one setting.
+ */
+export const PartialConfigSchema = ConfigSchema.partial().extend({
+  permissions: z.strictObject(permissionsFields).partial().optional(),
+  sandbox: z.strictObject(sandboxFields).partial().optional()
+});
 export type PartialConfig = z.infer<typeof PartialConfigSchema>;
 
 export const CONFIG_DEFAULTS: Config = {

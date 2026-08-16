@@ -35,6 +35,47 @@ describe('loadConfig', () => {
     expect(Object.values(sources).every((source) => source === 'default')).toBe(true);
   });
 
+  it('accepts a partial nested object and fills the rest from defaults', async () => {
+    // The shape a user actually writes to turn the sandbox on. Requiring all
+    // four sandbox fields per layer rejected this outright.
+    const { config, sources } = await loadConfig({
+      ...base,
+      readTextFile: files({
+        '/home/u/.harness/config.json': JSON.stringify({
+          sandbox: { enabled: true, allowedDomains: ['registry.npmjs.org'] }
+        })
+      })
+    });
+    expect(config.sandbox).toEqual({
+      enabled: true,
+      allowedDomains: ['registry.npmjs.org'],
+      allowWrite: [],
+      denyRead: []
+    });
+    expect(sources.sandbox).toBe('user');
+  });
+
+  it('merges nested objects field-by-field across layers', async () => {
+    // A project may add domains without restating the user's enabled flag.
+    const { config } = await loadConfig({
+      ...base,
+      readTextFile: files({
+        '/home/u/.harness/config.json': JSON.stringify({
+          sandbox: { enabled: true, allowedDomains: ['npmjs.org'] },
+          permissions: { allow: ['bash(git status:*)'] }
+        }),
+        '/work/repo/.harness/config.json': JSON.stringify({
+          sandbox: { allowedDomains: ['github.com'] },
+          permissions: { deny: ['write(secrets/**)'] }
+        })
+      })
+    });
+    expect(config.sandbox.enabled).toBe(true); // survived from the user layer
+    expect(config.sandbox.allowedDomains).toEqual(['github.com']); // replaced
+    expect(config.permissions.allow).toEqual(['bash(git status:*)']);
+    expect(config.permissions.deny).toEqual(['write(secrets/**)']);
+  });
+
   it('applies precedence default < user < project < env < flag', async () => {
     const { config, sources } = await loadConfig({
       ...base,

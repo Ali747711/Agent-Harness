@@ -8,6 +8,7 @@ import {
   CONFIG_KEYS,
   type Config,
   ConfigSchema,
+  isNestedConfigKey,
   type PartialConfig,
   PartialConfigSchema
 } from './schema.ts';
@@ -140,10 +141,18 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ResolvedCo
   for (const { layer, values } of layers) {
     for (const key of CONFIG_KEYS) {
       const value = values[key];
-      if (value !== undefined) {
-        overrides[key] = value;
-        sources[key] = layer;
+      if (value === undefined) {
+        continue;
       }
+      // Object-valued keys merge field-by-field so a layer can change one
+      // setting without restating the others; scalars and arrays replace.
+      overrides[key] = isNestedConfigKey(key)
+        ? {
+            ...((overrides[key] as object | undefined) ?? CONFIG_DEFAULTS[key]),
+            ...(value as object)
+          }
+        : value;
+      sources[key] = layer;
     }
   }
 
