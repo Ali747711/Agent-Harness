@@ -270,10 +270,10 @@ export function reduce(vm: ViewModel, event: AgentEvent): ViewModel {
       return {
         ...flushed,
         status: 'idle',
-        contextTokens:
-          event.usage.inputTokens +
-          event.usage.cacheReadInputTokens +
-          event.usage.cacheCreationInputTokens,
+        // The event's own reading: the LAST request's prompt size. Summing
+        // event.usage here counted every request in the turn and made "% ctx"
+        // roughly triple the truth on a multi-tool turn.
+        contextTokens: event.contextTokens,
         usage: {
           inputTokens: flushed.usage.inputTokens + event.usage.inputTokens,
           outputTokens: flushed.usage.outputTokens + event.usage.outputTokens,

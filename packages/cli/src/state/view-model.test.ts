@@ -29,6 +29,7 @@ const started: AgentEvent = {
 const completed: AgentEvent = {
   type: 'turn_completed',
   stopReason: 'end_turn',
+  contextTokens: 260,
   usage: {
     inputTokens: 100,
     outputTokens: 20,
@@ -232,9 +233,20 @@ describe('view-model reducer', () => {
   });
 
   it('accumulates usage across turns, including cache writes (R9)', () => {
+    // Built literally rather than spread: spreading a discriminated union
+    // widens it, and a cast here would hide exactly the drift the strict
+    // protocol schema exists to catch.
     const withCacheWrite: AgentEvent = {
-      ...completed,
-      usage: { ...completed.usage, cacheCreationInputTokens: 2500 }
+      type: 'turn_completed',
+      stopReason: 'end_turn',
+      contextTokens: 260,
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadInputTokens: 80,
+        cacheCreationInputTokens: 2500
+      },
+      costUsd: 0.001
     };
     const vm = apply(fresh(), [started, withCacheWrite, completed]);
     expect(vm.usage.inputTokens).toBe(200);

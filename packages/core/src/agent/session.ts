@@ -235,6 +235,7 @@ export class AgentSession {
 
     let requestCount = 0;
     let turnUsage = ZERO_USAGE;
+    let lastPromptTokens = 0;
 
     while (true) {
       if (requestCount >= config.maxTurns) {
@@ -275,6 +276,12 @@ export class AgentSession {
       }
 
       turnUsage = addUsage(turnUsage, outcome.usage);
+      // Prompt size of this request; the last one written wins, which is what
+      // the context reading needs.
+      lastPromptTokens =
+        outcome.usage.inputTokens +
+        outcome.usage.cacheReadInputTokens +
+        outcome.usage.cacheCreationInputTokens;
       if (outcome.content.length > 0) {
         this.history = [...this.history, { role: 'assistant', content: outcome.content }];
         const assistantPersistError = await this.tryAppend({
@@ -294,7 +301,7 @@ export class AgentSession {
           continue;
         case 'end_turn':
         case 'stop_sequence': {
-          yield this.turnCompleted(stopReason, turnUsage);
+          yield this.turnCompleted(stopReason, turnUsage, lastPromptTokens);
           break;
         }
         case 'tool_use': {
@@ -310,7 +317,7 @@ export class AgentSession {
           continue;
         }
         case 'max_tokens': {
-          yield this.turnCompleted(stopReason, turnUsage);
+          yield this.turnCompleted(stopReason, turnUsage, lastPromptTokens);
           yield {
             type: 'error',
             severity: 'error',
@@ -321,7 +328,7 @@ export class AgentSession {
           break;
         }
         case 'refusal': {
-          yield this.turnCompleted(stopReason, turnUsage);
+          yield this.turnCompleted(stopReason, turnUsage, lastPromptTokens);
           yield {
             type: 'error',
             severity: 'error',
@@ -332,7 +339,7 @@ export class AgentSession {
           break;
         }
         case 'model_context_window_exceeded': {
-          yield this.turnCompleted(stopReason, turnUsage);
+          yield this.turnCompleted(stopReason, turnUsage, lastPromptTokens);
           yield {
             type: 'error',
             severity: 'error',
@@ -711,11 +718,12 @@ export class AgentSession {
     };
   }
 
-  private turnCompleted(stopReason: StopReason, usage: Usage): AgentEvent {
+  private turnCompleted(stopReason: StopReason, usage: Usage, contextTokens: number): AgentEvent {
     return {
       type: 'turn_completed',
       stopReason,
       usage,
+      contextTokens,
       costUsd: estimateCostUsd(this.options.config.model, usage)
     };
   }

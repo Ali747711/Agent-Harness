@@ -34,6 +34,26 @@ async function collect(
 }
 
 describe('AgentSession loop v0', () => {
+  it('reports context as the last request only, not the turn total', async () => {
+    // A turn with a tool call makes two requests, each re-sending the whole
+    // history. Summing them made "% ctx" read ~2x the real context and look
+    // like runaway growth on a conversation that had barely grown.
+    const { session } = makeSession([
+      { toolCalls: [{ name: 'read', input: { path: 'a.ts' } }] },
+      { text: 'done' }
+    ]);
+    const events = await collect(session, 'go');
+    const completed = events.find((event) => event.type === 'turn_completed');
+
+    expect(completed).toBeDefined();
+    if (completed?.type !== 'turn_completed') {
+      throw new Error('expected turn_completed');
+    }
+    // The mock bills 100 input per request; two requests were made.
+    expect(completed.usage.inputTokens).toBe(200);
+    expect(completed.contextTokens).toBe(100);
+  });
+
   it('emits the golden one-shot sequence', async () => {
     const { session } = makeSession([{ text: 'short answer' }]);
     const events = await collect(session, 'say something short');
@@ -51,6 +71,10 @@ describe('AgentSession loop v0', () => {
       {
         type: 'turn_completed',
         stopReason: 'end_turn',
+        // One request in this turn, so the context reading equals its prompt.
+        // On a multi-tool turn it stays the LAST request's size while `usage`
+        // keeps summing every request.
+        contextTokens: 100,
         usage: {
           inputTokens: 100,
           outputTokens: 20,

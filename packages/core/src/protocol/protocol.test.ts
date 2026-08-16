@@ -56,6 +56,7 @@ const eventSamples: { [T in AgentEventType]: Extract<AgentEvent, { type: T }> } 
   turn_completed: {
     type: 'turn_completed',
     stopReason: 'end_turn',
+    contextTokens: 2100,
     usage: {
       inputTokens: 1200,
       outputTokens: 300,

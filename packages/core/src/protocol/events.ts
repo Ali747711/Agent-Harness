@@ -81,7 +81,15 @@ const PermissionResolvedSchema = z.strictObject({
 const TurnCompletedSchema = z.strictObject({
   type: z.literal('turn_completed'),
   stopReason: StopReasonSchema,
+  /** Summed across EVERY model request in the turn — this is billing, not size. */
   usage: UsageSchema,
+  /**
+   * Prompt size of the LAST request only: what the conversation currently
+   * costs to send once. `usage` cannot answer that — a turn with three tool
+   * calls re-sends the history three times, so its input total is roughly
+   * triple the real context and reads as runaway growth when nothing grew.
+   */
+  contextTokens: z.number().nonnegative(),
   costUsd: z.number().nonnegative()
 });
 

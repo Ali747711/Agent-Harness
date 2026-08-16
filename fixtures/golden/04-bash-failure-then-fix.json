@@ -74,6 +74,7 @@
         "cacheReadInputTokens": 0,
         "cacheCreationInputTokens": 0
       },
+      "contextTokens": 100,
       "costUsd": 0.003
     },
     {

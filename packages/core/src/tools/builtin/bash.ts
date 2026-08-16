@@ -4,7 +4,16 @@ import { defineTool, type RegisteredTool, type ToolResult } from '../tool.ts';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
-const MAX_OUTPUT_BYTES = 4_000_000;
+/**
+ * The same 256 KiB result budget every other tool respects (ADR-0007).
+ *
+ * This was 4 MB, which no other tool allowed — `read` has always capped at
+ * 256 KiB. A tool result is re-sent with EVERY subsequent request in the
+ * session, so one `cat` of a large file could add ~1M tokens per turn
+ * forever. The cap is on what enters the conversation, not on what the
+ * command may produce: output above it is dropped with an explicit marker.
+ */
+const MAX_OUTPUT_BYTES = 262_144;
 const MAX_RESULT_CHARS = 30_000;
 
 const BashInputSchema = z.strictObject({
@@ -85,8 +94,10 @@ export const bashTool: RegisteredTool = defineTool<BashInput>({
     });
 
     const output = renderOutput(result.stdout, result.stderr);
+    // Name the budget and the fix: a bare "was dropped" invites a blind rerun
+    // of the same command.
     const truncationNote = result.truncated
-      ? '\n[output exceeded the byte cap and was dropped]'
+      ? `\n[output exceeded the ${Math.round(MAX_OUTPUT_BYTES / 1024)} KiB result budget and was dropped — narrow the command, or redirect to a file and read a slice of it]`
       : '';
 
     if (result.timedOut) {
