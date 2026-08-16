@@ -25,7 +25,16 @@ export class TokenLedger {
   private requests = 0;
   private cost = 0;
 
-  constructor(private readonly model: string) {}
+  constructor(private model: string) {}
+
+  /**
+   * Switch pricing for FUTURE observations. Cost already accrued keeps the
+   * price it was billed at — re-pricing history against a model that did not
+   * run it would be fiction.
+   */
+  setModel(model: string): void {
+    this.model = model;
+  }
 
   observe(usage: Usage): void {
     this.totals = {

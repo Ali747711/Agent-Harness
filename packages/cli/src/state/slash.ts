@@ -11,7 +11,10 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: 'help', summary: 'show these commands and key bindings' },
   { name: 'clear', summary: 'start a fresh session (new transcript)' },
   { name: 'cost', summary: 'token and cost breakdown for this session' },
-  { name: 'model', summary: 'show the active model and effort' },
+  { name: 'model', summary: 'show or switch the model — /model claude-sonnet-5' },
+  { name: 'effort', summary: 'show or set reasoning effort — /effort medium' },
+  { name: 'permissions', summary: 'show mode and rules — /permissions acceptEdits' },
+  { name: 'config', summary: 'persist current settings — /config save' },
   { name: 'status', summary: 'model, workspace, memory, permission mode, usage' },
   { name: 'sessions', summary: 'list recent sessions for this project' },
   { name: 'exit', summary: 'quit harness' }

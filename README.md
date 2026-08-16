@@ -108,6 +108,8 @@ defaults → ~/.harness/config.json → <project>/.harness/config.json → HARNE
 }
 ```
 
+Settings can also be changed live from the TUI and persisted: `/effort medium`, `/model claude-sonnet-5`, `/permissions acceptEdits`, then `/config save` to write them to the project config. Effort is the biggest lever on cost — it controls how much the model thinks per turn.
+
 Env vars: `HARNESS_MODEL`, `HARNESS_EFFORT`, `HARNESS_THINKING`, `HARNESS_MAX_TOKENS`, `HARNESS_MAX_TURNS`, `HARNESS_PERMISSION_MODE`, `HARNESS_MEMORY_FILES` (comma-separated).
 
 Two deliberate constraints: **sampling parameters (`temperature`/`top_p`) are not representable** — current Claude models reject them, so the config schema rejects them with a validation error ([ADR-0010](docs/adr/0010-model-config-abstraction.md)); and **the API key is never config-file material** — environment only.

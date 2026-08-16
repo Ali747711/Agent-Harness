@@ -78,6 +78,82 @@ describe('SessionController', () => {
     expect(client.requests).toHaveLength(0);
   });
 
+  it('/effort changes the live setting without restarting the session', async () => {
+    const { controller, client } = build([{ text: 'ok' }]);
+    controller.submit('/effort medium');
+    await until(controller, (vm) => vm.transcript.length > 0);
+    expect((controller.state.transcript.at(-1) as { text: string }).text).toContain(
+      'effort → medium'
+    );
+
+    // The NEXT request must carry it — a setting that only prints is a lie.
+    controller.submit('do the thing');
+    await until(controller, (vm) => !controller.isWorking && vm.status === 'idle');
+    expect(client.requests.at(-1)?.effort).toBe('medium');
+  });
+
+  it('/effort rejects an unknown level instead of sending it upstream', async () => {
+    const { controller, client } = build([{ text: 'ok' }]);
+    controller.submit('/effort turbo');
+    await until(controller, (vm) => vm.transcript.length > 0);
+    expect((controller.state.transcript.at(-1) as { text: string }).text).toContain(
+      'unknown effort'
+    );
+    controller.submit('go');
+    await until(controller, (vm) => !controller.isWorking && vm.status === 'idle');
+    expect(client.requests.at(-1)?.effort).toBe(CONFIG_DEFAULTS.effort);
+  });
+
+  it('/model switches the model used by the next request', async () => {
+    const { controller, client } = build([{ text: 'ok' }]);
+    controller.submit('/model claude-haiku-4-5');
+    await until(controller, (vm) => vm.model === 'claude-haiku-4-5');
+
+    controller.submit('go');
+    await until(controller, (vm) => !controller.isWorking && vm.status === 'idle');
+    expect(client.requests.at(-1)?.model).toBe('claude-haiku-4-5');
+  });
+
+  it('/permissions sets the mode and reports the rules in force', async () => {
+    const { controller } = build([{ text: 'ok' }]);
+    controller.submit('/permissions acceptEdits');
+    await until(controller, (vm) => vm.permissionMode === 'acceptEdits');
+    const text = (controller.state.transcript.at(-1) as { text: string }).text;
+    expect(text).toContain('auto-edit');
+    // Deny precedence is the one rule a user must never mis-model.
+    expect(text).toContain('deny always wins');
+  });
+
+  it('/config save persists settings and reports where', async () => {
+    const saved: unknown[] = [];
+    const client = new MockModelClient([{ text: 'ok' }]);
+    const controller: SessionController = new SessionController({
+      session: new AgentSession({
+        config: { ...CONFIG_DEFAULTS },
+        modelClient: client,
+        workspaceRoot: workspace,
+        tools: builtinToolRegistry(),
+        onPermissionRequest: () => controller.permissionResponder()
+      }),
+      model: 'claude-opus-5',
+      workspaceRoot: workspace,
+      saveSettings: async (settings) => {
+        saved.push(settings);
+        return '/tmp/x/.harness/config.json';
+      }
+    });
+
+    controller.submit('/effort low');
+    await until(controller, (vm) => vm.transcript.length > 0);
+    controller.submit('/config save');
+    await until(controller, (vm) => vm.transcript.length > 1);
+
+    expect(saved).toEqual([{ model: 'claude-opus-5', effort: 'low', permissionMode: 'default' }]);
+    expect((controller.state.transcript.at(-1) as { text: string }).text).toContain(
+      '/tmp/x/.harness/config.json'
+    );
+  });
+
   it('ignores empty submissions', async () => {
     const { controller, client } = build([{ text: 'never' }]);
     controller.submit('   ');

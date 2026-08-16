@@ -3,7 +3,7 @@ import { sep } from 'node:path';
 import type { Config } from '../config/schema.ts';
 import type { MemoryFile } from '../context/memory.ts';
 import type { ContextPipeline } from '../context/pipeline.ts';
-import { PassthroughPipeline } from '../context/pipeline.ts';
+import { type ModelSettings, PassthroughPipeline } from '../context/pipeline.ts';
 import { buildSystemPrompt, type EnvironmentSnapshot } from '../context/system-prompt.ts';
 import { HarnessError, isHarnessError } from '../errors/index.ts';
 import { createCommandRunner } from '../exec/policy.ts';
@@ -198,6 +198,34 @@ export class AgentSession {
   /** Change the permission mode mid-session (TUI shift+tab). */
   setPermissionMode(mode: Config['permissionMode']): void {
     this.permissions.setMode(mode);
+  }
+
+  /** Live per-request settings (model, effort, thinking, maxTokens). */
+  get modelSettings(): ModelSettings {
+    return this.pipeline instanceof PassthroughPipeline
+      ? this.pipeline.modelSettings
+      : {
+          model: this.options.config.model,
+          effort: this.options.config.effort,
+          thinking: this.options.config.thinking,
+          maxTokens: this.options.config.maxTokens
+        };
+  }
+
+  /**
+   * Change model/effort/thinking/maxTokens mid-session. Effort and thinking
+   * are pure request params, so they cost nothing to change; switching model
+   * re-derives capabilities and re-prices the ledger, and the next request
+   * necessarily writes a fresh cache because caches are per-model.
+   */
+  setModelSettings(patch: Partial<ModelSettings>): void {
+    if (!(this.pipeline instanceof PassthroughPipeline)) {
+      return;
+    }
+    this.pipeline.updateSettings(
+      patch,
+      patch.model === undefined ? undefined : this.options.modelClient.capabilities(patch.model)
+    );
   }
 
   /** Session-wide token/cost totals from API usage fields only (R9). */
@@ -724,7 +752,7 @@ export class AgentSession {
       stopReason,
       usage,
       contextTokens,
-      costUsd: estimateCostUsd(this.options.config.model, usage)
+      costUsd: estimateCostUsd(this.modelSettings.model, usage)
     };
   }
 

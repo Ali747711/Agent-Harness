@@ -47,15 +47,52 @@ export interface PassthroughPipelineOptions {
  */
 const LOOKBACK_SAFETY_MESSAGES = 6;
 
+/** The per-request knobs, separated from frozen prefix material. */
+export interface ModelSettings {
+  model: Config['model'];
+  effort: Config['effort'];
+  thinking: Config['thinking'];
+  maxTokens: Config['maxTokens'];
+}
+
 export class PassthroughPipeline implements ContextPipeline {
   private readonly ledger: TokenLedger;
+  private settings: ModelSettings;
+  private capabilities: ModelCapabilities;
 
   constructor(private readonly options: PassthroughPipelineOptions) {
     this.ledger = new TokenLedger(options.config.model);
+    this.settings = {
+      model: options.config.model,
+      effort: options.config.effort,
+      thinking: options.config.thinking,
+      maxTokens: options.config.maxTokens
+    };
+    this.capabilities = options.capabilities;
+  }
+
+  get modelSettings(): ModelSettings {
+    return { ...this.settings };
+  }
+
+  /**
+   * Change per-request settings mid-session. Safe for the prompt cache: none
+   * of these live in the cached prefix (tools + system), which stays frozen
+   * per ADR-0008. Switching MODEL is the exception — a cache is per-model, so
+   * the next request necessarily re-writes it. Callers say so.
+   */
+  updateSettings(patch: Partial<ModelSettings>, capabilities?: ModelCapabilities): void {
+    this.settings = { ...this.settings, ...patch };
+    if (capabilities !== undefined) {
+      this.capabilities = capabilities;
+    }
+    if (patch.model !== undefined) {
+      this.ledger.setModel(patch.model);
+    }
   }
 
   build(state: PipelineState): ModelRequest {
-    const { config } = this.options;
+    const config = this.settings;
     const messages = [...state.messages];
     return {
       model: config.model,
@@ -65,7 +102,7 @@ export class PassthroughPipeline implements ContextPipeline {
       system: this.options.system,
       tools: this.options.tools,
       messages,
-      cacheBreakpoints: breakpointsFor(messages.length, this.options.capabilities)
+      cacheBreakpoints: breakpointsFor(messages.length, this.capabilities)
     };
   }
 

@@ -1,4 +1,11 @@
-import type { AgentSession, PermissionChoice, PermissionMode } from '@harness/core';
+import {
+  type AgentSession,
+  type Effort,
+  EffortSchema,
+  type PermissionChoice,
+  type PermissionMode,
+  PermissionModeSchema
+} from '@harness/core';
 
 import { isKnownCommand, parseSlash, SLASH_COMMANDS } from '../state/slash.ts';
 import {
@@ -24,6 +31,17 @@ import { MODE_DISPLAY } from '../ui/theme.ts';
  * goes idle. True mid-turn steering (injecting into a running turn) needs loop
  * support and is deferred; the protocol's `steer` command is reserved for it.
  */
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const PERMISSION_MODES = ['default', 'acceptEdits', 'bypass'] as const;
+const MODEL_SUGGESTIONS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
+
+/** What /config save persists. Writing files stays out of the controller. */
+export interface SavedSettings {
+  model: string;
+  effort: Effort;
+  permissionMode: PermissionMode;
+}
+
 export interface ControllerOptions {
   session: AgentSession;
   model: string;
@@ -40,6 +58,10 @@ export interface ControllerOptions {
   newSession?: () => Promise<AgentSession> | AgentSession;
   /** Backs /sessions; injected so the controller stays free of storage concerns. */
   listSessions?: () => Promise<string[]>;
+  /** Shown by /permissions; the engine owns enforcement, this is display only. */
+  permissions?: { allow: readonly string[]; deny: readonly string[] };
+  /** Backs /config save. Returns the path written, for the confirmation. */
+  saveSettings?: (settings: SavedSettings) => Promise<string>;
 }
 
 export class SessionController {
@@ -110,7 +132,7 @@ export class SessionController {
     // Slash commands are client-side: they never reach the model.
     const command = parseSlash(trimmed);
     if (command !== null && isKnownCommand(command.name)) {
-      void this.runCommand(command.name);
+      void this.runCommand(command.name, command.args);
       return;
     }
     if (command !== null) {
@@ -122,7 +144,7 @@ export class SessionController {
     void this.drain();
   }
 
-  private async runCommand(name: string): Promise<void> {
+  private async runCommand(name: string, args = ''): Promise<void> {
     switch (name) {
       case 'help': {
         const lines = SLASH_COMMANDS.map(
@@ -155,9 +177,113 @@ export class SessionController {
         );
         return;
       }
-      case 'model':
-        this.update(withNotice(this.vm, `model: ${this.options.model}`));
+      // Settings are changed from inside the session, not by restarting with
+      // different flags — the point is to dial cost down mid-task.
+      case 'model': {
+        const current = this.session.modelSettings;
+        if (args === '') {
+          this.update(
+            withNotice(
+              this.vm,
+              `model: ${current.model}\nusage: /model <id>   e.g. ${MODEL_SUGGESTIONS.join(' · ')}`
+            )
+          );
+          return;
+        }
+        this.session.setModelSettings({ model: args });
+        // Caches are per-model, so the next request necessarily re-writes the
+        // prefix. Saying so keeps the one-off cost spike explicable.
+        this.update({
+          ...withNotice(this.vm, `model → ${args} (the next request rebuilds the prompt cache)`),
+          model: args
+        });
         return;
+      }
+      case 'effort': {
+        const current = this.session.modelSettings;
+        if (args === '') {
+          this.update(
+            withNotice(
+              this.vm,
+              `effort: ${current.effort}\nusage: /effort <${EFFORT_LEVELS.join('|')}>\n` +
+                'lower effort means less thinking per turn — the biggest single lever on cost'
+            )
+          );
+          return;
+        }
+        const parsed = EffortSchema.safeParse(args);
+        if (!parsed.success) {
+          this.update(
+            withNotice(this.vm, `unknown effort "${args}" — use ${EFFORT_LEVELS.join(', ')}`)
+          );
+          return;
+        }
+        this.session.setModelSettings({ effort: parsed.data });
+        // Effort is a request parameter, not prefix material, so this costs
+        // nothing in cache terms (ADR-0008).
+        this.update(withNotice(this.vm, `effort → ${parsed.data} (cache unaffected)`));
+        return;
+      }
+      case 'permissions': {
+        if (args !== '') {
+          const parsed = PermissionModeSchema.safeParse(args);
+          if (!parsed.success) {
+            this.update(
+              withNotice(this.vm, `unknown mode "${args}" — use ${PERMISSION_MODES.join(', ')}`)
+            );
+            return;
+          }
+          this.session.setPermissionMode(parsed.data);
+          this.update(withPermissionMode(this.vm, parsed.data));
+        }
+        const mode = MODE_DISPLAY[this.vm.permissionMode];
+        const rules = this.options.permissions ?? { allow: [], deny: [] };
+        this.update(
+          withNotice(
+            this.vm,
+            [
+              `mode   ${mode.label} · ${mode.detail}   (shift+tab cycles)`,
+              `allow  ${rules.allow.length === 0 ? 'none' : rules.allow.join(', ')}`,
+              `deny   ${rules.deny.length === 0 ? 'none' : rules.deny.join(', ')}`,
+              `usage: /permissions <${PERMISSION_MODES.join('|')}>`,
+              'rules live in config; deny always wins, even in bypass'
+            ].join('\n')
+          )
+        );
+        return;
+      }
+      case 'config': {
+        if (args !== 'save') {
+          this.update(
+            withNotice(
+              this.vm,
+              'usage: /config save — persist model, effort, and permission mode to this project'
+            )
+          );
+          return;
+        }
+        if (this.options.saveSettings === undefined) {
+          this.update(withNotice(this.vm, '/config save is unavailable in this mode'));
+          return;
+        }
+        const current = this.session.modelSettings;
+        try {
+          const path = await this.options.saveSettings({
+            model: current.model,
+            effort: current.effort,
+            permissionMode: this.vm.permissionMode
+          });
+          this.update(withNotice(this.vm, `saved to ${path}`));
+        } catch (error) {
+          this.update(
+            withNotice(
+              this.vm,
+              `could not save: ${error instanceof Error ? error.message : String(error)}`
+            )
+          );
+        }
+        return;
+      }
       // The footer sheds detail to stay on one line; this is where it lands.
       case 'status': {
         const totals = this.session.usage();

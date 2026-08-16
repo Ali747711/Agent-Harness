@@ -18,6 +18,7 @@ import { createElement } from 'react';
 import { App } from '../ui/app.tsx';
 import { SessionController } from './controller.ts';
 import { readGitBranch } from './git.ts';
+import { settingsWriter } from './save-settings.ts';
 import { clearScreen } from './screen.ts';
 
 export interface InteractiveOptions {
@@ -95,6 +96,8 @@ export async function runInteractive(
       allowedDomains: options.config.sandbox.allowedDomains
     },
     gitBranch,
+    permissions: options.config.permissions,
+    saveSettings: settingsWriter(options.workspaceRoot),
     newSession: async () => {
       await active.sink.close().catch(() => undefined);
       active = await store.create({

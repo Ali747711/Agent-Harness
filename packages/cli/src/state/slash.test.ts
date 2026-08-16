@@ -20,7 +20,9 @@ describe('slash commands', () => {
   });
 
   it('suggests completions while typing and stops once a space is typed', () => {
-    expect(completions('/c').map((command) => command.name)).toEqual(['clear', 'cost']);
+    expect(completions('/c').map((command) => command.name)).toEqual(['clear', 'cost', 'config']);
+    // Argument-taking commands still complete on the name alone.
+    expect(completions('/e').map((command) => command.name)).toEqual(['effort', 'exit']);
     expect(completions('/').length).toBeGreaterThan(3);
     expect(completions('/clear ')).toEqual([]);
     expect(completions('not a command')).toEqual([]);
